@@ -51,4 +51,15 @@ describe("NotesApp keyboard parity", () => {
     fireEvent.keyDown(firstNote, { key: "ArrowDown" });
     expect(await screen.findByDisplayValue("Weekly review")).toBeInTheDocument();
   });
+
+  it("renders navigation lists without React key warnings", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      render(<NotesApp />);
+      await screen.findByDisplayValue("A quieter place for your notes");
+      expect(consoleError.mock.calls.flat().some(([message]) => String(message).includes("Each child in a list should have a unique"))).toBe(false);
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
 });

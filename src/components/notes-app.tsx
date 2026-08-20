@@ -342,8 +342,8 @@ export function NotesApp() {
     { id: "shortcuts", label: "Keyboard shortcuts", description: "See every keyboard action", shortcut: "?", icon: Keyboard },
   ].filter((command) => `${command.label} ${command.description}`.toLowerCase().includes(paletteQuery.toLowerCase()));
 
-  function sidebarButton(label: string, icon: React.ReactNode, active: boolean, onClick: () => void, count?: number, onDrop?: (event: React.DragEvent<HTMLButtonElement>) => void) {
-    return <button type="button" className="nav-item" data-active={active} onClick={onClick} onDragOver={(event) => event.preventDefault()} onDrop={onDrop} aria-current={active ? "page" : undefined}>{icon}<span>{label}</span>{typeof count === "number" && <span className="count">{count}</span>}</button>;
+  function sidebarButton(label: string, icon: React.ReactNode, active: boolean, onClick: () => void, count?: number, onDrop?: (event: React.DragEvent<HTMLButtonElement>) => void, itemKey?: string) {
+    return <button key={itemKey} type="button" className="nav-item" data-active={active} onClick={onClick} onDragOver={(event) => event.preventDefault()} onDrop={onDrop} aria-current={active ? "page" : undefined}>{icon}<span>{label}</span>{typeof count === "number" && <span className="count">{count}</span>}</button>;
   }
 
   return (
@@ -378,7 +378,7 @@ export function NotesApp() {
               <div className="sidebar-section">
                 <div className="section-label"><span>Folders</span><button type="button" aria-label="Add folder" onClick={() => setCreatingFolder(true)}><FolderPlus className="h-3.5 w-3.5" /></button></div>
                 <div className="folder-list">
-                  {workspace.folders.map((folder) => sidebarButton(folder.name, <span className={cn("folder-dot", colorClass(folder.color))} />, query.folderId === folder.id, () => { setQuery({ search: "", filter: "all", folderId: folder.id, groupId: null }); setMobilePane("list"); }, workspace.notes.filter((note) => note.folderId === folder.id && !note.archived).length, (event) => handleFolderDrop(event, folder.id)))}
+                  {workspace.folders.map((folder) => sidebarButton(folder.name, <span className={cn("folder-dot", colorClass(folder.color))} />, query.folderId === folder.id, () => { setQuery({ search: "", filter: "all", folderId: folder.id, groupId: null }); setMobilePane("list"); }, workspace.notes.filter((note) => note.folderId === folder.id && !note.archived).length, (event) => handleFolderDrop(event, folder.id), folder.id))}
                 </div>
                 {creatingFolder && <form className="inline-create" onSubmit={createFolder}><Input autoFocus value={newFolderName} onChange={(event) => setNewFolderName(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") setCreatingFolder(false); }} placeholder="Folder name" aria-label="New folder name" /><Button type="submit" size="icon-sm" aria-label="Create folder"><Check className="h-4 w-4" /></Button></form>}
               </div>
@@ -386,7 +386,7 @@ export function NotesApp() {
               <div className="sidebar-section">
                 <div className="section-label"><span>Groups</span><button type="button" aria-label="Add group" onClick={() => setCreatingGroup(true)}><Plus className="h-3.5 w-3.5" /></button></div>
                 <div className="group-list">
-                  {workspace.groups.map((group) => sidebarButton(group.name, <span className={cn("group-dot", colorClass(group.color))} />, query.groupId === group.id, () => { setQuery({ search: "", filter: "all", folderId: null, groupId: group.id }); setMobilePane("list"); }, workspace.notes.filter((note) => note.groupId === group.id && !note.archived).length))}
+                  {workspace.groups.map((group) => sidebarButton(group.name, <span className={cn("group-dot", colorClass(group.color))} />, query.groupId === group.id, () => { setQuery({ search: "", filter: "all", folderId: null, groupId: group.id }); setMobilePane("list"); }, workspace.notes.filter((note) => note.groupId === group.id && !note.archived).length, undefined, group.id))}
                 </div>
                 {creatingGroup && <form className="inline-create" onSubmit={createGroup}><Input autoFocus value={newGroupName} onChange={(event) => setNewGroupName(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") setCreatingGroup(false); }} placeholder="Group name" aria-label="New group name" /><Button type="submit" size="icon-sm" aria-label="Create group"><Check className="h-4 w-4" /></Button></form>}
               </div>

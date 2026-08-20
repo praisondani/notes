@@ -1,0 +1,21 @@
+services:
+  cinder:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATA_DIR: /app/data
+      PORT: 3000
+    ports:
+      - "${CINDER_PORT:-3000}:3000"
+    volumes:
+      - cinder-data:/app/data
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "--quiet", "http://127.0.0.1:3000/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  cinder-data:

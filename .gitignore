@@ -1,0 +1,32 @@
+# Local documentation and generated notes
+/docs/
+/work/
+/outputs/
+
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Next.js
+.next/
+out/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Local data and runtime files
+data/
+storage/
+.turbo/
+coverage/
+*.tsbuildinfo
+playwright-report/
+test-results/
+
+# OS and editor files
+.DS_Store
+.idea/
+.vscode/
+*.swp

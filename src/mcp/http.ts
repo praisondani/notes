@@ -1,5 +1,6 @@
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { authenticateMcpRequest, consumeMcpRateLimit } from "@/lib/mcp-auth";
+import { buildMcpWwwAuthenticate } from "@/lib/mcp-oauth";
 import { createMcpServer } from "@/mcp/server";
 
 function configuredList(name: string): string[] {
@@ -53,7 +54,7 @@ export async function handleMcpRequest(request: Request): Promise<Response> {
   const authentication = await authenticateMcpRequest(request);
   if (!authentication.ok) {
     const headers = new Headers();
-    if (authentication.status === 401) headers.set("WWW-Authenticate", "Bearer");
+    if (authentication.status === 401) headers.set("WWW-Authenticate", buildMcpWwwAuthenticate(request, authentication.message === "Invalid MCP credentials"));
     return jsonError(authentication.message, authentication.status, request, allowedOrigins, headers);
   }
 

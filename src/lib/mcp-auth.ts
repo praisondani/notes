@@ -1,9 +1,11 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { mcpResourceUrl, verifyOAuthAccessToken } from "@/lib/mcp-oauth";
+import { MCP_SCOPES, normalizeMcpScopes, type McpScope } from "@/lib/mcp-scopes";
 
-export const MCP_SCOPES = ["notes:read", "notes:write"] as const;
-export type McpScope = (typeof MCP_SCOPES)[number];
+export { MCP_SCOPES } from "@/lib/mcp-scopes";
+export type { McpScope } from "@/lib/mcp-scopes";
 
 type StoredMcpToken = {
   id: string;
@@ -19,7 +21,8 @@ export type McpAuthContext = {
   tokenId: string;
   tokenPrefix: string;
   scopes: ReadonlySet<McpScope>;
-  source: "environment" | "file" | "stdio";
+  source: "environment" | "file" | "oauth" | "stdio";
+  userId?: string;
 };
 
 export type McpAuthFailure = {
@@ -45,10 +48,7 @@ function tokenFilePath(): string {
 }
 
 function parseScopes(value: string | undefined, fallback: McpScope[]): McpScope[] {
-  if (value === undefined) return [...fallback];
-  const scopes = [...new Set(value.split(",").map((scope) => scope.trim()).filter(Boolean))];
-  if (!scopes.length || scopes.some((scope) => !MCP_SCOPES.includes(scope as McpScope))) throw new Error("Invalid MCP scopes");
-  return scopes as McpScope[];
+  return normalizeMcpScopes(value === undefined ? fallback : value.split(","));
 }
 
 function hashToken(token: string): string {
@@ -106,6 +106,20 @@ export async function authenticateMcpRequest(request: Request): Promise<McpAuthR
   }
 
   try {
+    const oauthContext = await verifyOAuthAccessToken(providedToken, mcpResourceUrl(new URL(request.url).origin));
+    if (oauthContext) {
+      return {
+        ok: true,
+        context: {
+          tokenId: oauthContext.tokenId,
+          tokenPrefix: oauthContext.tokenPrefix,
+          scopes: new Set(oauthContext.scopes),
+          source: "oauth",
+          userId: oauthContext.userId,
+        },
+      };
+    }
+
     const environmentToken = process.env.MCP_ACCESS_TOKEN?.trim() ?? "";
     const storedTokens = await loadStoredTokens();
     let matched: McpAuthContext | undefined;
@@ -132,7 +146,6 @@ export async function authenticateMcpRequest(request: Request): Promise<McpAuthR
     }
 
     if (matched) return { ok: true, context: matched };
-    if (!environmentToken && !storedTokens.length) return { ok: false, status: 503, message: "MCP authentication is not configured" };
     return { ok: false, status: 401, message: "Invalid MCP credentials" };
   } catch {
     return { ok: false, status: 503, message: "MCP authentication is not configured" };

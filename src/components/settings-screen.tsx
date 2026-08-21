@@ -3,7 +3,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Check, Clipboard, Download, KeyRound, LogOut, Monitor, Moon, ShieldCheck, Sun, UserRound } from "lucide-react";
+import { ArrowLeft, Check, Clipboard, Download, KeyRound, LogOut, Monitor, Moon, ShieldCheck, Sun, Trash2, UserRound, UsersRound } from "lucide-react";
 import { LoginScreen } from "@/components/login-screen";
 import { SetupScreen } from "@/components/setup-screen";
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,7 @@ import { applyTheme, readThemePreference, resolveDarkTheme, setThemePreference a
 import type { AuthUser } from "@/lib/auth-store";
 
 type Session = { setupRequired: boolean; authenticated: boolean; user?: AuthUser };
+type ConnectedClient = { clientId: string; clientName: string; clientUri?: string; scopes?: string[]; createdAt: string; activeTokenCount: number };
 
 function statusClass(message: string): string {
   return message.startsWith("Error:") ? "text-destructive" : "text-primary";
@@ -30,6 +31,8 @@ export function SettingsScreen() {
   const [profileMessage, setProfileMessage] = useState("");
   const [passwordMessage, setPasswordMessage] = useState("");
   const [dataMessage, setDataMessage] = useState("");
+  const [connectedClients, setConnectedClients] = useState<ConnectedClient[]>([]);
+  const [clientsLoading, setClientsLoading] = useState(true);
   const [profileLoading, setProfileLoading] = useState(false);
   const [passwordLoading, setPasswordLoading] = useState(false);
   const [dataLoading, setDataLoading] = useState(false);
@@ -56,6 +59,27 @@ export function SettingsScreen() {
       });
     return () => { cancelled = true; };
   }, []);
+
+  useEffect(() => {
+    if (!session?.authenticated) return;
+    let cancelled = false;
+    fetch("/api/oauth/clients", { cache: "no-store" })
+      .then(async (response) => {
+        const body = await response.json().catch(() => ({})) as { clients?: ConnectedClient[]; error?: string };
+        if (!response.ok) throw new Error(body.error ?? "Connected agents could not be loaded.");
+        return body.clients ?? [];
+      })
+      .then((clients) => {
+        if (!cancelled) setConnectedClients(clients);
+      })
+      .catch((error) => {
+        if (!cancelled) setDataMessage(`Error: ${error instanceof Error ? error.message : "Connected agents could not be loaded."}`);
+      })
+      .finally(() => {
+        if (!cancelled) setClientsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [session?.authenticated]);
 
   useEffect(() => {
     applyTheme(themePreference);
@@ -153,6 +177,19 @@ export function SettingsScreen() {
     }
   }
 
+  async function revokeClient(clientId: string, clientName: string) {
+    setDataMessage("");
+    try {
+      const response = await fetch("/api/oauth/clients", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clientId }) });
+      const payload = await response.json().catch(() => ({})) as { error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "Connection could not be revoked.");
+      setConnectedClients((clients) => clients.filter((client) => client.clientId !== clientId));
+      setDataMessage(`${clientName} was disconnected. Existing access tokens were revoked.`);
+    } catch (error) {
+      setDataMessage(`Error: ${error instanceof Error ? error.message : "Connection could not be revoked."}`);
+    }
+  }
+
   async function signOut() {
     await fetch("/api/auth/logout", { method: "POST" });
     router.push("/");
@@ -213,8 +250,9 @@ export function SettingsScreen() {
           <section className="settings-section" id="data" aria-labelledby="data-heading">
             <div className="settings-section-heading"><div><h2 id="data-heading">Data and connections</h2><p>Keep a portable backup and connect trusted coding or chat agents.</p></div><Download className="h-5 w-5 text-muted-foreground" /></div>
             <div className="settings-data-row"><div><strong>Export workspace</strong><p>Download notes, folders, groups, tags, and attachment metadata as JSON.</p></div><Button variant="outline" onClick={exportWorkspace} disabled={dataLoading}><Download className="h-4 w-4" />{dataLoading ? "Preparing…" : "Export"}</Button></div>
-            <div className="settings-data-row"><div><strong>Remote MCP endpoint</strong><p>Use a scoped bearer token generated on the server. Tokens are not displayed here.</p><code className="settings-code">{mcpEndpoint}</code></div><Button variant="outline" onClick={copyMcpEndpoint}>{copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}{copied ? "Copied" : "Copy URL"}</Button></div>
-            <div className="settings-mcp-help"><strong>Connect an agent safely</strong><p>On the server, run <code>npm run mcp:token -- create --label codex --scopes notes:read</code>. Copy the one-time token into your agent’s secret configuration as <code>Authorization: Bearer …</code>. Add <code>notes:write</code> only for agents that need to create or edit notes.</p><p>Codex, Cursor, and ChatGPT may expose different MCP connection screens. Use this endpoint and bearer header in the remote MCP server configuration; keep the token out of source code, URLs, prompts, and screenshots.</p></div>
+            <div className="settings-data-row"><div><strong>Remote MCP endpoint</strong><p>Add this URL to Codex, Cursor, or another MCP client. The client will open a browser sign-in and consent screen.</p><code className="settings-code">{mcpEndpoint}</code></div><Button variant="outline" onClick={copyMcpEndpoint}>{copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}{copied ? "Copied" : "Copy URL"}</Button></div>
+            <div className="settings-mcp-help"><strong>Browser-based connection</strong><p>Use the endpoint above with OAuth. Approve only the permissions you need. Notes uses PKCE, exact redirect URI checks, resource-bound access tokens, refresh-token rotation, and revocation.</p><p>For scripts or clients without OAuth, run <code>npm run mcp:token -- create --label coding-agent --scopes notes:read</code> on the server and store the one-time bearer token in the client’s secret manager. Add <code>notes:write</code> only for agents that need to change notes.</p></div>
+            <div className="settings-connected-agents"><div className="settings-connected-heading"><div><strong>Connected agents</strong><p>Revoke an agent here to invalidate its OAuth client and all of its tokens.</p></div><UsersRound className="h-4 w-4 text-muted-foreground" /></div>{clientsLoading ? <p className="settings-empty-note">Loading connected agents…</p> : connectedClients.length === 0 ? <p className="settings-empty-note">No browser-connected agents yet.</p> : <div className="settings-client-list">{connectedClients.map((client) => <div className="settings-client" key={client.clientId}><div><strong>{client.clientName}</strong><p>{client.scopes?.join(", ") || "notes:read"} · connected {new Date(client.createdAt).toLocaleDateString()}</p></div><Button variant="outline" size="sm" onClick={() => revokeClient(client.clientId, client.clientName)}><Trash2 className="h-3.5 w-3.5" />Revoke</Button></div>)}</div>}</div>
             {dataMessage && <p className={statusClass(dataMessage)} role="status">{dataMessage}</p>}
           </section>
 

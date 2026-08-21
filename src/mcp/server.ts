@@ -174,7 +174,7 @@ function mapGroupInput(input: GroupInput) {
 }
 
 export function createMcpServer(context: McpServerContext): McpServer {
-  const server = new McpServer({ name: "notes", version: "0.2.0" });
+  const server = new McpServer({ name: "notes", version: "0.4.0" });
 
   server.registerTool("workspace_summary", {
     title: "Workspace summary",

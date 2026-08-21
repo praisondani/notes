@@ -1,5 +1,5 @@
 services:
-  cinder:
+  notes:
     build: .
     restart: unless-stopped
     env_file:
@@ -8,9 +8,9 @@ services:
       DATA_DIR: /app/data
       PORT: 3000
     ports:
-      - "${CINDER_PORT:-3000}:3000"
+      - "${NOTES_PORT:-3000}:3000"
     volumes:
-      - cinder-data:/app/data
+      - notes-data:/app/data
     healthcheck:
       test: ["CMD", "wget", "--spider", "--quiet", "http://127.0.0.1:3000/"]
       interval: 30s
@@ -18,4 +18,4 @@ services:
       retries: 3
 
 volumes:
-  cinder-data:
+  notes-data:

@@ -1,4 +1,6 @@
 @import "tailwindcss";
+@source "./";
+@source "../src";
 
 :root {
   --background: oklch(1 0 0);

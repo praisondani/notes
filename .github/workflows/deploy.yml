@@ -26,8 +26,8 @@ jobs:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
         run: |
           install -m 700 -d ~/.ssh
-          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/cinder_deploy
-          chmod 600 ~/.ssh/cinder_deploy
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/notes_deploy
+          chmod 600 ~/.ssh/notes_deploy
           ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
       - name: Deploy over SSH
         env:
@@ -35,4 +35,4 @@ jobs:
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
           DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
         run: |
-          ssh -i ~/.ssh/cinder_deploy "$DEPLOY_USER@$DEPLOY_HOST" "cd '$DEPLOY_PATH' && git fetch --tags origin && git checkout --force '$GITHUB_REF_NAME' && docker compose up -d --build"
+          ssh -i ~/.ssh/notes_deploy "$DEPLOY_USER@$DEPLOY_HOST" "cd '$DEPLOY_PATH' && git fetch --tags origin && git checkout --force '$GITHUB_REF_NAME' && docker compose up -d --build"

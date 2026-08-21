@@ -81,7 +81,7 @@ export function NotesApp() {
   const [loading, setLoading] = useState(true);
   const [saveState, setSaveState] = useState<SaveState>("saved");
   const [draggingId, setDraggingId] = useState<string | null>(null);
-  const [darkMode, setDarkMode] = useState(() => typeof window !== "undefined" && window.localStorage.getItem("cinder-theme") === "dark");
+  const [darkMode, setDarkMode] = useState(() => typeof window !== "undefined" && window.localStorage.getItem("notes-theme") === "dark");
   const [hydrated, setHydrated] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const titleRef = useRef<HTMLInputElement>(null);
@@ -185,7 +185,7 @@ export function NotesApp() {
   function setTheme(nextDark: boolean) {
     setDarkMode(nextDark);
     document.documentElement.classList.toggle("dark", nextDark);
-    window.localStorage.setItem("cinder-theme", nextDark ? "dark" : "light");
+    window.localStorage.setItem("notes-theme", nextDark ? "dark" : "light");
   }
 
   function createNewNote() {
@@ -353,7 +353,7 @@ export function NotesApp() {
           <div className="brand-lockup">
             <Button variant="ghost" size="icon-sm" className="mobile-only" aria-label="Open navigation" onClick={() => setMobilePane("sidebar")}><Menu className="h-4 w-4" /></Button>
             <span className="brand-mark" aria-hidden="true"><Layers3 className="h-4 w-4" /></span>
-            <span>Cinder</span>
+            <span>Notes</span>
           </div>
           <div className="topbar-actions">
             <Tooltip><TooltipTrigger asChild><Button variant="ghost" size="icon-sm" aria-label="Keyboard shortcuts" onClick={() => setShortcutsDialogOpen(true)}><Keyboard className="h-4 w-4" /></Button></TooltipTrigger><TooltipContent>Keyboard shortcuts</TooltipContent></Tooltip>

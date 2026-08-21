@@ -8,8 +8,8 @@ fi
 
 if [ ! -f .env ]; then
   cp .env.example .env
-  echo "Created .env from .env.example. Set AUTH_PASSWORD and storage values before exposing Cinder." >&2
+  echo "Created .env from .env.example. Set AUTH_PASSWORD and storage values before exposing Notes." >&2
 fi
 
 docker compose up -d --build
-echo "Cinder is running at http://localhost:${CINDER_PORT:-3000}"
+echo "Notes is running at http://localhost:${NOTES_PORT:-3000}"

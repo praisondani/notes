@@ -15,7 +15,7 @@ export const seedWorkspace: Workspace = {
     {
       id: "note-welcome",
       title: "A quieter place for your notes",
-      content: "Cinder keeps capture close and organization light.\n\nTry the shortcuts, drag a note into a folder, or add a link below.",
+      content: "Notes keeps capture close and organization light.\n\nTry the shortcuts, drag a note into a folder, or add a link below.",
       folderId: "folder-projects",
       groupId: "group-work",
       tags: ["welcome", "workflow"],

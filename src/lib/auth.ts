@@ -3,14 +3,14 @@ import "server-only";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
 
-const SESSION_COOKIE = "cinder_session";
+const SESSION_COOKIE = "notes_session";
 
 function configuredPassword(): string {
   return process.env.AUTH_PASSWORD?.trim() ?? "";
 }
 
 function sessionToken(): string {
-  const secret = process.env.AUTH_SECRET?.trim() || "cinder-development-secret";
+  const secret = process.env.AUTH_SECRET?.trim() || "notes-development-secret";
   return createHmac("sha256", secret).update(`authenticated:${configuredPassword()}`).digest("hex");
 }
 

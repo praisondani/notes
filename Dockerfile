@@ -18,12 +18,13 @@ ENV HOSTNAME=0.0.0.0
 ENV PORT=3000
 ENV DATA_DIR=/app/data
 
-RUN addgroup --system --gid 1001 cinder && adduser --system --uid 1001 cinder
-COPY --from=builder --chown=cinder:cinder /app/public ./public
-COPY --from=builder --chown=cinder:cinder /app/.next/standalone ./
-COPY --from=builder --chown=cinder:cinder /app/.next/static ./.next/static
-RUN mkdir -p /app/data && chown -R cinder:cinder /app/data
+RUN addgroup --system --gid 1001 notes && adduser --system --uid 1001 notes
+COPY --from=builder --chown=notes:notes /app/public ./public
+COPY --from=builder --chown=notes:notes /app/.next/standalone ./
+COPY --from=builder --chown=notes:notes /app/.next/static ./.next/static
+COPY --from=builder --chown=notes:notes /app/scripts ./scripts
+RUN mkdir -p /app/data && chown -R notes:notes /app/data
 
-USER cinder
+USER notes
 EXPOSE 3000
 CMD ["node", "server.js"]

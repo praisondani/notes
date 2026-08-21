@@ -2,6 +2,20 @@
 
 All notable changes are documented here.
 
+## [0.4.0] - 2026-08-21
+
+### Added
+
+- Browser-based MCP OAuth with protected-resource and authorization-server discovery.
+- S256 PKCE consent flow, dynamic client registration, authorization-code exchange, refresh-token rotation, and token revocation.
+- Settings controls for viewing and revoking connected agents.
+- Codex and Cursor connection instructions with a safe bearer-token fallback.
+
+### Security
+
+- OAuth access tokens are resource-bound and stored only as hashes.
+- Authorization requests require the authenticated Notes owner and exact redirect URI validation.
+
 ## [0.2.1] - 2026-08-21
 
 ### Changed

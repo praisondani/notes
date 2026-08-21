@@ -2,7 +2,7 @@
 
 Notes is a minimal, self-hostable private note workspace for text, images, files, links, checklists, folders, groups, filters, and search. It runs in a browser and keeps keyboard and mouse actions at parity.
 
-Version `0.3.0` adds owner accounts, password rotation, settings, safer session handling, and the first interaction polish release. Group collaboration, sync conflict resolution, and native clients are future work.
+Version `0.4.0` adds browser-based OAuth for MCP agents, PKCE authorization, token rotation and revocation, and connected-agent controls in Settings. Group collaboration, sync conflict resolution, and native clients are future work.
 
 ## Features
 
@@ -14,7 +14,7 @@ Version `0.3.0` adds owner accounts, password rotation, settings, safer session 
 - Keyboard parity: `⌘/Ctrl K`, `⌘/Ctrl N`, `⌘/Ctrl Shift F`, `⌘/Ctrl Shift P`, `⌘/Ctrl S`, arrows, Enter, and Escape.
 - Local JSON persistence by default; S3-compatible object storage for attachments.
 - Owner account with username or email sign-in, salted password hashes, signed sessions, same-origin checks, login throttling, and password rotation.
-- Authenticated MCP server for agent-connected CRUD, resources, search, and local RAG.
+- Authenticated MCP server for agent-connected CRUD, resources, search, and local RAG, with OAuth for browser-based clients and bearer-token fallback for scripts.
 - shadcn/ui-style components built from Radix primitives.
 - Instant navigation shell powered by Next.js Cache Components, with private workspace data kept behind the authenticated boundary.
 
@@ -65,7 +65,8 @@ Copy `.env.example` to `.env`.
 - `AUTH_USERNAME`, `AUTH_EMAIL`: optional values used for the first-run owner account or legacy password migration.
 - `AUTH_PASSWORD`: legacy bootstrap password. If `data/auth.json` does not exist, Notes migrates this value once into a salted password hash. New installs can create the owner account in the browser instead.
 - `AUTH_SECRET`: long random value used to sign session cookies. Required in production.
-- `MCP_ACCESS_TOKEN`: optional single bearer token for HTTP MCP. Leave empty to keep HTTP MCP disabled.
+- `MCP_RESOURCE_URL`: optional canonical MCP resource URL. Defaults to `${APP_URL}/api/mcp`; leave empty for normal installs.
+- `MCP_ACCESS_TOKEN`: optional legacy bearer token for HTTP MCP. OAuth clients do not need this value.
 - `MCP_ACCESS_TOKEN_SCOPES`: comma-separated scopes for the environment token. Use `notes:read` for read-only access or add `notes:write` for CRUD.
 - `MCP_ALLOWED_HOSTS`: exact `Host` values accepted by the MCP endpoint. Set this to the public hostname and port used by your reverse proxy; HTTP MCP fails closed if this and `APP_URL` are both missing.
 - `MCP_ALLOWED_ORIGINS`: exact browser origins allowed to call MCP. Leave empty for native agent clients without browser CORS.
@@ -79,7 +80,25 @@ Without S3 values, attachments are stored under `DATA_DIR/uploads`. This makes l
 
 ## MCP server
 
-Notes exposes a standard MCP Streamable HTTP endpoint at `/api/mcp`. It is stateless, bearer-authenticated, and disabled until a token is configured. Tokens are never accepted in URLs or query parameters.
+Notes exposes a standard MCP Streamable HTTP endpoint at `/api/mcp`. It supports OAuth 2.1-style authorization-code flow with S256 PKCE, dynamic client registration, protected-resource discovery, refresh-token rotation, and browser consent. OAuth access tokens are bound to the MCP resource and are never accepted in URLs or query parameters. The existing bearer-token flow remains available for scripts and older clients.
+
+### Connect Codex or Cursor with browser sign-in
+
+Use the public MCP URL with a client that supports remote OAuth:
+
+```sh
+codex mcp add notes --url https://notes.example.com/api/mcp
+```
+
+Codex discovers Notes’ OAuth metadata and opens a browser. Sign in, review the requested scopes, and approve the connection. In Cursor, add the same URL from its MCP settings; it will use the same browser consent flow. You can revoke either connection from **Settings → Data and connections**.
+
+If Codex reports an invalid reasoning-effort value before it runs the command, update `~/.codex/config.toml` so it contains:
+
+```toml
+model_reasoning_effort = "xhigh"
+```
+
+Then retry the command. Do not pass a raw token to `--bearer-token-env-var`; that option expects the name of an environment variable.
 
 For multiple agents, create revocable credentials. The raw token is printed once and the data directory stores only its SHA-256 hash:
 
@@ -95,7 +114,14 @@ For the Docker install, run the same command inside the container:
 docker compose exec notes node scripts/mcp-token.mjs create --label coding-agent --scopes notes:read
 ```
 
-Connect any MCP client that supports remote servers with a configuration like this:
+For a client without OAuth support, use a legacy bearer token. Create it on the server and keep the value in a local secret manager or environment variable:
+
+```sh
+export NOTES_MCP_TOKEN='paste-the-one-time-token-here'
+codex mcp add notes --url https://notes.example.com/api/mcp --bearer-token-env-var NOTES_MCP_TOKEN
+```
+
+An equivalent remote-client configuration is:
 
 ```json
 {
@@ -122,7 +148,7 @@ The MCP surface includes `list_notes`, `get_note`, `create_note`, `update_note`,
 
 Use a read-only token whenever an agent only needs retrieval. Store tokens in the agent's secret configuration, never in source control, prompts, URLs, screenshots, or logs.
 
-This release has one private workspace per deployment. All valid MCP tokens for the same deployment access that workspace; per-user workspace isolation and OAuth are future extensions.
+This release has one private workspace per deployment. The owner account that approves an OAuth connection controls access to that deployment; all valid legacy bearer tokens for the same deployment access that workspace.
 
 ## Cloudflare R2
 

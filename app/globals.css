@@ -169,6 +169,65 @@ button:disabled {
   background: var(--card);
 }
 
+.oauth-panel {
+  width: min(100%, 460px);
+}
+
+.oauth-loading {
+  color: var(--muted-foreground);
+  font-size: 13px;
+}
+
+.oauth-client-summary {
+  display: grid;
+  gap: 3px;
+  border-radius: 8px;
+  background: var(--muted);
+  padding: 12px;
+}
+
+.oauth-client-summary strong {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.oauth-client-summary span,
+.oauth-footnote,
+.settings-empty-note {
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.oauth-scope-list {
+  display: grid;
+  gap: 9px;
+}
+
+.oauth-scope {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13px;
+}
+
+.oauth-warning {
+  border-left: 2px solid var(--accent);
+  padding-left: 10px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.oauth-actions {
+  display: flex;
+  gap: 9px;
+}
+
+.oauth-actions > * {
+  flex: 1;
+}
+
 .login-copy {
   display: flex;
   gap: 12px;
@@ -1100,6 +1159,47 @@ button:disabled {
   font-size: 11px;
 }
 
+.settings-connected-agents {
+  display: grid;
+  gap: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 20px;
+}
+
+.settings-connected-heading,
+.settings-client {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.settings-connected-heading strong,
+.settings-client strong {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.settings-connected-heading p,
+.settings-client p {
+  margin-top: 4px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.settings-client-list {
+  display: grid;
+  gap: 8px;
+}
+
+.settings-client {
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 11px 12px;
+}
+
 .settings-note a {
   color: var(--primary);
   text-decoration: underline;
@@ -1220,6 +1320,15 @@ html.theme-switching *::after {
   }
 
   .settings-data-row {
+    flex-direction: column;
+  }
+
+  .oauth-actions {
+    flex-direction: column;
+  }
+
+  .settings-client {
+    align-items: flex-start;
     flex-direction: column;
   }
 }

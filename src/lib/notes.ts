@@ -1,4 +1,4 @@
-import type { Note, NoteFilter, NoteQuery, Workspace } from "@/lib/types";
+import type { ChecklistItem, Note, NoteFilter, NoteQuery, Workspace } from "@/lib/types";
 
 export function createId(prefix: string): string {
   const random = typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -32,6 +32,27 @@ export function getNotePreview(note: Note): string {
   if (note.checklist.length) return `${note.checklist.length} checklist item${note.checklist.length === 1 ? "" : "s"}`;
   if (note.attachments.length) return `${note.attachments.length} attachment${note.attachments.length === 1 ? "" : "s"}`;
   return "No text yet";
+}
+
+export function firstSentence(value: string): string {
+  const text = value.replace(/\s+/g, " ").trim();
+  if (!text) return "";
+  const match = text.match(/^(.+?[.!?])(?:\s|$)/);
+  return (match?.[1] ?? text).replace(/[.!?]+$/, "").slice(0, 120).trim();
+}
+
+export function withDerivedTitle(note: Note): Note {
+  const title = note.title.trim();
+  if (title && title.toLocaleLowerCase() !== "untitled note") return note;
+  const derived = firstSentence(note.content);
+  return derived ? { ...note, title: derived } : note;
+}
+
+export function isNoteEmpty(note: Note): boolean {
+  const title = note.title.trim().toLocaleLowerCase();
+  const hasTitle = title.length > 0 && title !== "untitled note";
+  const hasChecklist = note.checklist.some((item) => item.text.trim().length > 0 || item.completed);
+  return !hasTitle && !note.content.trim() && !hasChecklist && note.attachments.length === 0 && note.tags.length === 0;
 }
 
 export function noteMatchesSearch(note: Note, search: string): boolean {
@@ -109,6 +130,17 @@ export function reorderNotes(notes: Note[], sourceId: string, targetId: string, 
   next.splice(targetIndex, 0, source);
   const timestamp = now.toISOString();
   return next.map((note, position) => ({ ...note, position, updatedAt: note.id === sourceId ? timestamp : note.updatedAt }));
+}
+
+export function reorderChecklist(items: ChecklistItem[], sourceId: string, targetId: string): ChecklistItem[] {
+  if (sourceId === targetId) return items;
+  const sourceIndex = items.findIndex((item) => item.id === sourceId);
+  const targetIndex = items.findIndex((item) => item.id === targetId);
+  if (sourceIndex < 0 || targetIndex < 0) return items;
+  const next = [...items];
+  const [source] = next.splice(sourceIndex, 1);
+  next.splice(targetIndex, 0, source);
+  return next;
 }
 
 export function toggleChecklist(notes: Note[], noteId: string, itemId: string, now = new Date()): Note[] {

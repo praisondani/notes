@@ -2,8 +2,6 @@ import { NextResponse } from "next/server";
 import { isAuthenticated } from "@/lib/auth";
 import { readLocalObject } from "@/lib/storage";
 
-export const runtime = "nodejs";
-
 function contentType(key: string): string {
   const extension = key.split(".").pop()?.toLowerCase();
   const types: Record<string, string> = {

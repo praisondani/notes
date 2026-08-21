@@ -1,6 +1,6 @@
 {
   "name": "notes",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "private": false,
   "description": "A minimal, self-hostable private note workspace.",
   "license": "MIT",
@@ -10,8 +10,8 @@
   },
   "scripts": {
     "dev": "next dev --turbopack",
-    "build": "next build",
-    "start": "next start",
+    "build": "next build --webpack",
+    "start": "node .next/standalone/server.js",
     "lint": "eslint app src scripts next.config.ts vitest.config.ts eslint.config.mjs",
     "test": "vitest run",
     "test:watch": "vitest",

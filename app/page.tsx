@@ -1,10 +1,11 @@
-import { NotesApp } from "@/components/notes-app";
-import { LoginScreen } from "@/components/login-screen";
-import { authEnabled, isAuthenticated } from "@/lib/auth";
+import { Suspense } from "react";
+import { AuthGate } from "@/components/auth-gate";
+import { WorkspaceLoading } from "@/components/workspace-loading";
 
-export const dynamic = "force-dynamic";
+export const instant = true;
 
-export default async function HomePage() {
-  if (authEnabled() && !(await isAuthenticated())) return <LoginScreen />;
-  return <NotesApp />;
+export default function HomePage() {
+  return (
+    <Suspense fallback={<WorkspaceLoading />}><AuthGate /></Suspense>
+  );
 }

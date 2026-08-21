@@ -4,8 +4,6 @@ import { ensureWorkspace } from "@/lib/notes";
 import { loadWorkspace, saveWorkspace } from "@/lib/store";
 import type { Workspace } from "@/lib/types";
 
-export const runtime = "nodejs";
-
 export async function GET() {
   if (!(await isAuthenticated())) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   return NextResponse.json(await loadWorkspace());

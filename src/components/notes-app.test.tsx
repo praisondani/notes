@@ -52,6 +52,30 @@ describe("NotesApp keyboard parity", () => {
     expect(await screen.findByDisplayValue("Weekly review")).toBeInTheDocument();
   });
 
+  it("removes an untouched draft and derives its title when leaving it", async () => {
+    render(<NotesApp />);
+    await screen.findByDisplayValue("A quieter place for your notes");
+    fireEvent.keyDown(window, { key: "n", ctrlKey: true });
+    const editor = screen.getByLabelText("Note content");
+    fireEvent.change(editor, { target: { value: "A useful thought. A second thought." } });
+    fireEvent.click(screen.getByRole("option", { name: /A quieter place for your notes/ }));
+    await waitFor(() => expect(screen.getByRole("option", { name: /A useful thought/ })).toBeInTheDocument());
+
+    fireEvent.keyDown(window, { key: "n", ctrlKey: true });
+    expect(screen.getByDisplayValue("Untitled note")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("option", { name: /Weekly review/ }));
+    await waitFor(() => expect(screen.queryByDisplayValue("Untitled note")).not.toBeInTheDocument());
+  });
+
+  it("supports keyboard checklist reordering", async () => {
+    render(<NotesApp />);
+    await screen.findByDisplayValue("A quieter place for your notes");
+    const moveDown = screen.getByRole("button", { name: /Move Press ⌘ K for the command palette down/ });
+    fireEvent.click(moveDown);
+    const items = screen.getAllByLabelText("Checklist item text") as HTMLInputElement[];
+    expect(items.map((item) => item.value)).toEqual(["Drag this note into another folder", "Press ⌘ K for the command palette"]);
+  });
+
   it("renders navigation lists without React key warnings", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
@@ -61,5 +85,12 @@ describe("NotesApp keyboard parity", () => {
     } finally {
       consoleError.mockRestore();
     }
+  });
+
+  it("shows the login screen without rendering workspace content when authentication is required", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 401 }));
+    render(<NotesApp />);
+    expect(await screen.findByText("Private workspace")).toBeInTheDocument();
+    expect(screen.queryByDisplayValue("A quieter place for your notes")).not.toBeInTheDocument();
   });
 });

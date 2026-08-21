@@ -2,7 +2,7 @@
 
 Notes is a minimal, self-hostable private note workspace for text, images, files, links, checklists, folders, groups, filters, and search. It runs in a browser and keeps keyboard and mouse actions at parity.
 
-Version `0.2.1` is the Notes rename release. The web client and local deployment path are usable; group collaboration, sync conflict resolution, and native clients are future work.
+Version `0.3.0` adds owner accounts, password rotation, settings, safer session handling, and the first interaction polish release. Group collaboration, sync conflict resolution, and native clients are future work.
 
 ## Features
 
@@ -13,9 +13,10 @@ Version `0.2.1` is the Notes rename release. The web client and local deployment
 - Native drag-and-drop for moving notes into folders and reordering the note list.
 - Keyboard parity: `⌘/Ctrl K`, `⌘/Ctrl N`, `⌘/Ctrl Shift F`, `⌘/Ctrl Shift P`, `⌘/Ctrl S`, arrows, Enter, and Escape.
 - Local JSON persistence by default; S3-compatible object storage for attachments.
-- Optional single-user password gate for private deployments.
+- Owner account with username or email sign-in, salted password hashes, signed sessions, same-origin checks, login throttling, and password rotation.
 - Authenticated MCP server for agent-connected CRUD, resources, search, and local RAG.
 - shadcn/ui-style components built from Radix primitives.
+- Instant navigation shell powered by Next.js Cache Components, with private workspace data kept behind the authenticated boundary.
 
 ## Run locally
 
@@ -35,6 +36,8 @@ Run checks before opening a pull request:
 npm run check
 ```
 
+Next.js development does not prefetch in-app navigations. Use `npm run build && npm run start` or the standalone Docker server when checking production navigation behavior. See the [Next.js instant navigation guide](https://nextjs.org/docs/app/guides/instant-navigation) for the framework model and debugging tools.
+
 ## One-command self-hosting
 
 With Docker installed:
@@ -43,12 +46,14 @@ With Docker installed:
 ./scripts/install.sh
 ```
 
-The script creates `.env` if it does not exist, builds the production image, and starts Notes with a persistent Docker volume. On Windows, run the same workflow from WSL or use PowerShell:
+The script creates `.env` if it does not exist, generates a private `AUTH_SECRET`, builds the production image, and starts Notes with a persistent Docker volume. Create the owner account in the browser, then add any R2 values to `.env`. On Windows, run the same workflow from WSL or use PowerShell:
 
 ```powershell
 Copy-Item .env.example .env
 docker compose up -d --build
 ```
+
+When using the PowerShell path, replace the `AUTH_SECRET` placeholder in `.env` with a long random value before the first start.
 
 Docker keeps the runtime and volume layout the same across Linux, macOS, Windows, and WSL.
 
@@ -57,8 +62,9 @@ Docker keeps the runtime and volume layout the same across Linux, macOS, Windows
 Copy `.env.example` to `.env`.
 
 - `DATA_DIR`: local workspace and upload path. Defaults to `./data`.
-- `AUTH_PASSWORD`: optional single-user password. Set this before exposing Notes publicly.
-- `AUTH_SECRET`: long random value used to sign the session cookie.
+- `AUTH_USERNAME`, `AUTH_EMAIL`: optional values used for the first-run owner account or legacy password migration.
+- `AUTH_PASSWORD`: legacy bootstrap password. If `data/auth.json` does not exist, Notes migrates this value once into a salted password hash. New installs can create the owner account in the browser instead.
+- `AUTH_SECRET`: long random value used to sign session cookies. Required in production.
 - `MCP_ACCESS_TOKEN`: optional single bearer token for HTTP MCP. Leave empty to keep HTTP MCP disabled.
 - `MCP_ACCESS_TOKEN_SCOPES`: comma-separated scopes for the environment token. Use `notes:read` for read-only access or add `notes:write` for CRUD.
 - `MCP_ALLOWED_HOSTS`: exact `Host` values accepted by the MCP endpoint. Set this to the public hostname and port used by your reverse proxy; HTTP MCP fails closed if this and `APP_URL` are both missing.
@@ -81,6 +87,12 @@ For multiple agents, create revocable credentials. The raw token is printed once
 npm run mcp:token -- create --label coding-agent --scopes notes:read,notes:write
 npm run mcp:token -- list
 npm run mcp:token -- revoke <token-id>
+```
+
+For the Docker install, run the same command inside the container:
+
+```sh
+docker compose exec notes node scripts/mcp-token.mjs create --label coding-agent --scopes notes:read
 ```
 
 Connect any MCP client that supports remote servers with a configuration like this:
@@ -133,7 +145,7 @@ Keep R2 credentials server-side. They are never read by the browser bundle.
 
 ## Deploy to a Linux server
 
-Clone the public repository on the server, create `.env`, set a password and storage values, then run:
+Clone the public repository on the server, create `.env`, set `AUTH_SECRET` and storage values, then run:
 
 ```sh
 ./scripts/install.sh
@@ -146,7 +158,7 @@ Put a TLS reverse proxy in front of port `3000`. The included GitHub Actions wor
 - `DEPLOY_PATH`
 - `DEPLOY_SSH_KEY`
 
-The workflow runs checks, then deploys version tags over SSH. It does not contain any maintainer-specific account, bucket, or host value.
+The workflow runs checks, then deploys version tags over SSH. It does not contain any maintainer-specific account, bucket, or host value. On first launch, create the owner account in the browser; older installs using `AUTH_PASSWORD` are migrated automatically on the first auth request.
 
 ## Architecture
 
@@ -164,4 +176,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Changes should include tests for domain 
 
 ## Security
 
-See [SECURITY.md](SECURITY.md). Do not run a public instance with an empty `AUTH_PASSWORD` unless another access-control layer protects it.
+See [SECURITY.md](SECURITY.md). Create an owner account, set `AUTH_SECRET`, and use HTTPS before exposing an instance publicly.

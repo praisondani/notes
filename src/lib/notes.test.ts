@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { createNote, filterNotes, moveNote, noteMatchesSearch, reorderNotes, toggleChecklist, togglePinned, updateNote } from "@/lib/notes";
-import type { Note } from "@/lib/types";
+import { createNote, filterNotes, firstSentence, isNoteEmpty, moveNote, noteMatchesSearch, reorderChecklist, reorderNotes, toggleChecklist, togglePinned, updateNote, withDerivedTitle } from "@/lib/notes";
+import type { ChecklistItem, Note } from "@/lib/types";
 
 const now = new Date("2026-08-20T12:00:00.000Z");
 
@@ -61,5 +61,24 @@ describe("note domain", () => {
     expect(pinned.find((item) => item.id === "two")?.pinned).toBe(true);
     const withChecklist = updateNote(notes, "one", { checklist: [{ id: "item", text: "Ship", completed: false }] }, now);
     expect(toggleChecklist(withChecklist, "one", "item", now).find((item) => item.id === "one")?.checklist[0].completed).toBe(true);
+  });
+
+  it("derives a title from the first sentence and recognizes truly empty drafts", () => {
+    const draft = note("draft", "", { content: "First sentence. Second sentence." });
+    expect(firstSentence(draft.content)).toBe("First sentence");
+    expect(withDerivedTitle(draft).title).toBe("First sentence");
+    expect(isNoteEmpty(note("empty", "Untitled note"))).toBe(true);
+    expect(isNoteEmpty(note("written", "", { content: "A thought" }))).toBe(false);
+    expect(isNoteEmpty(note("organized", "", { checklist: [{ id: "item", text: "Do it", completed: false }] }))).toBe(false);
+  });
+
+  it("reorders checklist items without changing their content", () => {
+    const checklist: ChecklistItem[] = [
+      { id: "one", text: "One", completed: false },
+      { id: "two", text: "Two", completed: true },
+      { id: "three", text: "Three", completed: false },
+    ];
+    expect(reorderChecklist(checklist, "three", "one")).toEqual([checklist[2], checklist[0], checklist[1]]);
+    expect(reorderChecklist(checklist, "missing", "one")).toEqual(checklist);
   });
 });

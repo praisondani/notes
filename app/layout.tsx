@@ -6,10 +6,18 @@ export const metadata: Metadata = {
   description: "A minimal, self-hostable private note workspace.",
 };
 
+const themeInitScript = `try {
+  const stored = localStorage.getItem("notes-theme");
+  const preference = stored === "light" || stored === "dark" || stored === "system" ? stored : "system";
+  const dark = preference === "dark" || (preference === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  document.documentElement.dataset.theme = preference;
+  document.documentElement.classList.toggle("dark", dark);
+} catch {}`;
+
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en">
-      <body>{children}</body>
+    <html lang="en" suppressHydrationWarning>
+      <body><script dangerouslySetInnerHTML={{ __html: themeInitScript }} />{children}</body>
     </html>
   );
 }

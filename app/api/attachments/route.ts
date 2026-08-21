@@ -2,8 +2,6 @@ import { NextResponse } from "next/server";
 import { isAuthenticated } from "@/lib/auth";
 import { storeObject } from "@/lib/storage";
 
-export const runtime = "nodejs";
-
 export async function POST(request: Request) {
   if (!(await isAuthenticated())) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   const formData = await request.formData();

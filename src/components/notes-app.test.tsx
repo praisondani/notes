@@ -76,6 +76,51 @@ describe("NotesApp keyboard parity", () => {
     expect(items.map((item) => item.value)).toEqual(["Drag this note into another folder", "Press ⌘ K for the command palette"]);
   });
 
+  it("renames a folder from its sidebar title and center-column title", async () => {
+    render(<NotesApp />);
+    const folder = await screen.findByRole("button", { name: /Projects, folder/ });
+    fireEvent.doubleClick(folder);
+    const renameInput = await screen.findByRole("textbox", { name: "Rename folder" });
+    fireEvent.change(renameInput, { target: { value: "Client work" } });
+    fireEvent.blur(renameInput);
+    expect(screen.getByRole("button", { name: /Client work, folder/ })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Client work, folder/ }));
+    const listTitle = document.querySelector<HTMLButtonElement>(".list-title-button");
+    expect(listTitle).toBeInTheDocument();
+    fireEvent.doubleClick(listTitle!);
+    const centerRenameInput = await screen.findByRole("textbox", { name: "Rename folder" });
+    fireEvent.change(centerRenameInput, { target: { value: "Client projects" } });
+    fireEvent.blur(centerRenameInput);
+    expect(screen.getAllByRole("button", { name: /Client projects, folder/ })).toHaveLength(2);
+  });
+
+  it("deletes a folder and detaches its notes after confirmation", async () => {
+    render(<NotesApp />);
+    await screen.findByDisplayValue("A quieter place for your notes");
+    fireEvent.click(screen.getByRole("button", { name: "Delete folder Projects" }));
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Delete folder" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: /Projects, folder/ })).not.toBeInTheDocument());
+    expect(screen.getByDisplayValue("A quieter place for your notes")).toBeInTheDocument();
+  });
+
+  it("supports collapsed sidebar and collection label editing", async () => {
+    render(<NotesApp />);
+    await screen.findByDisplayValue("A quieter place for your notes");
+    const appShell = document.querySelector<HTMLElement>(".app-shell");
+    fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
+    expect(appShell).toHaveAttribute("data-sidebar-collapsed", "true");
+    fireEvent.keyDown(window, { key: "b", ctrlKey: true, shiftKey: true });
+    expect(appShell).toHaveAttribute("data-sidebar-collapsed", "false");
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Edit folder label" })[0]);
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: "Blue label" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(screen.getByRole("button", { name: /Projects, folder/ }).querySelector("svg")).toHaveClass("blue");
+  });
+
   it("renders navigation lists without React key warnings", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     try {

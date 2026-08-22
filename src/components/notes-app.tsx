@@ -13,8 +13,10 @@ import {
   Command as CommandIcon,
   File,
   FilePlus2,
+  Folder as FolderIcon,
   FolderPlus,
   GripVertical,
+  Hexagon,
   Inbox,
   Keyboard,
   Layers3,
@@ -22,6 +24,9 @@ import {
   ListChecks,
   Menu,
   Moon,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Pencil,
   Paperclip,
   Pin,
   PinOff,
@@ -48,6 +53,19 @@ import { cn, formatBytes, formatDate } from "@/lib/utils";
 
 type MobilePane = "sidebar" | "list" | "editor";
 type SaveState = "saved" | "saving" | "error";
+type CollectionKind = "folder" | "group";
+type CollectionTarget = { kind: CollectionKind; id: string };
+type CollectionRenameSurface = "sidebar" | "title";
+
+const collectionLabelOptions = [
+  { id: "green", name: "Green" },
+  { id: "amber", name: "Amber" },
+  { id: "slate", name: "Slate" },
+  { id: "blue", name: "Blue" },
+  { id: "rose", name: "Rose" },
+] as const;
+
+type CollectionColor = (typeof collectionLabelOptions)[number]["id"];
 
 const filterOptions: Array<{ id: NoteFilter; label: string }> = [
   { id: "all", label: "All" },
@@ -63,12 +81,25 @@ function noteCount(notes: Note[], filter: NoteFilter): number {
 }
 
 function colorClass(color: string): string {
-  return color === "amber" ? "amber" : color === "slate" ? "slate" : "green";
+  return collectionLabelOptions.some((option) => option.id === color) ? color : "slate";
+}
+
+function collectionKindLabel(kind: CollectionKind): string {
+  return kind === "folder" ? "folder" : "group";
+}
+
+function collectionTargetLabel(target: CollectionTarget): string {
+  return target.kind === "folder" ? "Folder" : "Group";
 }
 
 function isEditableTarget(target: EventTarget | null): boolean {
   const element = target instanceof HTMLElement ? target : null;
   return element?.isContentEditable || element?.matches("input, textarea, select") || false;
+}
+
+function CollectionShape({ kind, color }: { kind: CollectionKind; color: string }) {
+  const Shape = kind === "folder" ? FolderIcon : Hexagon;
+  return <Shape className={cn("collection-shape", kind === "folder" ? "folder-shape" : "group-shape", colorClass(color))} aria-hidden="true" />;
 }
 
 export function NotesApp() {
@@ -84,8 +115,18 @@ export function NotesApp() {
   const [linkUrl, setLinkUrl] = useState("");
   const [newFolderName, setNewFolderName] = useState("");
   const [newGroupName, setNewGroupName] = useState("");
+  const [newFolderColor, setNewFolderColor] = useState<CollectionColor>("green");
+  const [newGroupColor, setNewGroupColor] = useState<CollectionColor>("green");
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [creatingGroup, setCreatingGroup] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [editingCollection, setEditingCollection] = useState<CollectionTarget | null>(null);
+  const [editingCollectionSurface, setEditingCollectionSurface] = useState<CollectionRenameSurface | null>(null);
+  const [collectionNameDraft, setCollectionNameDraft] = useState("");
+  const [collectionEditor, setCollectionEditor] = useState<CollectionTarget | null>(null);
+  const [collectionEditorName, setCollectionEditorName] = useState("");
+  const [collectionEditorColor, setCollectionEditorColor] = useState<CollectionColor>("green");
+  const [deleteTarget, setDeleteTarget] = useState<CollectionTarget | null>(null);
   const [loading, setLoading] = useState(true);
   const [authRequired, setAuthRequired] = useState(false);
   const [saveState, setSaveState] = useState<SaveState>("saved");
@@ -96,12 +137,28 @@ export function NotesApp() {
   const [hydrated, setHydrated] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const titleRef = useRef<HTMLInputElement>(null);
+  const collectionRenameRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const selectedNote = workspace.notes.find((note) => note.id === selectedNoteId) ?? null;
   const filteredNotes = useMemo(() => filterNotes(workspace.notes, query), [workspace.notes, query]);
   const selectedFolder = workspace.folders.find((folder) => folder.id === selectedNote?.folderId);
   const selectedGroup = workspace.groups.find((group) => group.id === selectedNote?.groupId);
+  const activeFolder = query.folderId ? workspace.folders.find((folder) => folder.id === query.folderId) : undefined;
+  const activeGroup = query.groupId ? workspace.groups.find((group) => group.id === query.groupId) : undefined;
+  const activeCollection = activeFolder ?? activeGroup;
+  const activeCollectionTarget: CollectionTarget | null = activeFolder
+    ? { kind: "folder", id: activeFolder.id }
+    : activeGroup
+      ? { kind: "group", id: activeGroup.id }
+      : null;
+  const listTitle = query.filter === "inbox"
+    ? "Inbox"
+    : query.filter === "pinned"
+      ? "Pinned"
+      : query.filter === "archived"
+        ? "Archive"
+        : "All notes";
 
   async function persistWorkspace(nextWorkspace: Workspace) {
     setSaveState("saving");
@@ -147,6 +204,10 @@ export function NotesApp() {
     media.addEventListener("change", updateSystemTheme);
     return () => media.removeEventListener("change", updateSystemTheme);
   }, [themePreference]);
+
+  useEffect(() => {
+    setSidebarCollapsed(window.localStorage.getItem("notes-sidebar-collapsed") === "true");
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -213,6 +274,11 @@ export function NotesApp() {
         void persistWorkspace(workspace);
         return;
       }
+      if (modifier && event.shiftKey && event.key.toLowerCase() === "b" && !isEditableTarget(event.target)) {
+        event.preventDefault();
+        toggleSidebar();
+        return;
+      }
       if (event.key === "?" && !isEditableTarget(event.target)) {
         event.preventDefault();
         setShortcutsDialogOpen(true);
@@ -231,6 +297,14 @@ export function NotesApp() {
     const nextPreference: ThemePreference = nextDark ? "dark" : "light";
     setThemePreferenceState(nextPreference);
     setDarkMode(saveThemePreference(nextPreference));
+  }
+
+  function toggleSidebar() {
+    setSidebarCollapsed((current) => {
+      const next = !current;
+      window.localStorage.setItem("notes-sidebar-collapsed", String(next));
+      return next;
+    });
   }
 
   function updateSelectedNote(patch: Partial<Note>) {
@@ -273,13 +347,116 @@ export function NotesApp() {
     setSelectedNoteId(remaining[index]?.id ?? remaining[index - 1]?.id ?? null);
   }
 
+  function findCollection(target: CollectionTarget): NoteFolder | Group | undefined {
+    return target.kind === "folder"
+      ? workspace.folders.find((folder) => folder.id === target.id)
+      : workspace.groups.find((group) => group.id === target.id);
+  }
+
+  function normalizeCollectionColor(color: string): CollectionColor {
+    return collectionLabelOptions.some((option) => option.id === color) ? color as CollectionColor : "slate";
+  }
+
+  function beginCollectionRename(target: CollectionTarget, surface: CollectionRenameSurface) {
+    const collection = findCollection(target);
+    if (!collection) return;
+    setEditingCollection(target);
+    setEditingCollectionSurface(surface);
+    setCollectionNameDraft(collection.name);
+    window.setTimeout(() => {
+      collectionRenameRef.current?.focus();
+      collectionRenameRef.current?.select();
+    }, 0);
+  }
+
+  function commitInlineCollectionRename() {
+    if (!editingCollection) return;
+    const name = collectionNameDraft.trim();
+    if (!name) return;
+    const target = editingCollection;
+    setWorkspace((current) => target.kind === "folder"
+      ? { ...current, folders: current.folders.map((folder) => folder.id === target.id ? { ...folder, name } : folder) }
+      : { ...current, groups: current.groups.map((group) => group.id === target.id ? { ...group, name } : group) });
+    setEditingCollection(null);
+    setEditingCollectionSurface(null);
+  }
+
+  function saveInlineCollectionRename(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    commitInlineCollectionRename();
+  }
+
+  function handleCollectionKeyDown(event: React.KeyboardEvent<HTMLElement>, target: CollectionTarget, surface: CollectionRenameSurface) {
+    if (event.key === "F2") {
+      event.preventDefault();
+      beginCollectionRename(target, surface);
+    } else if (event.key === "Delete") {
+      event.preventDefault();
+      requestCollectionDelete(target);
+    }
+  }
+
+  function openCollectionEditor(target: CollectionTarget) {
+    const collection = findCollection(target);
+    if (!collection) return;
+    setEditingCollection(null);
+    setEditingCollectionSurface(null);
+    setCollectionEditor(target);
+    setCollectionEditorName(collection.name);
+    setCollectionEditorColor(normalizeCollectionColor(collection.color));
+  }
+
+  function saveCollectionEditor(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!collectionEditor) return;
+    const name = collectionEditorName.trim();
+    if (!name) return;
+    const target = collectionEditor;
+    setWorkspace((current) => target.kind === "folder"
+      ? { ...current, folders: current.folders.map((folder) => folder.id === target.id ? { ...folder, name, color: collectionEditorColor } : folder) }
+      : { ...current, groups: current.groups.map((group) => group.id === target.id ? { ...group, name, color: collectionEditorColor } : group) });
+    setCollectionEditor(null);
+  }
+
+  function requestCollectionDelete(target: CollectionTarget) {
+    if (!findCollection(target)) return;
+    setEditingCollection(null);
+    setEditingCollectionSurface(null);
+    setCollectionEditor(null);
+    setDeleteTarget(target);
+  }
+
+  function confirmCollectionDelete() {
+    if (!deleteTarget) return;
+    const target = deleteTarget;
+    setWorkspace((current) => target.kind === "folder"
+      ? {
+          ...current,
+          folders: current.folders
+            .filter((folder) => folder.id !== target.id)
+            .map((folder) => folder.parentId === target.id ? { ...folder, parentId: null } : folder),
+          notes: current.notes.map((note) => note.folderId === target.id ? { ...note, folderId: null } : note),
+        }
+      : {
+          ...current,
+          groups: current.groups.filter((group) => group.id !== target.id),
+          notes: current.notes.map((note) => note.groupId === target.id ? { ...note, groupId: null } : note),
+        });
+    if ((target.kind === "folder" && query.folderId === target.id) || (target.kind === "group" && query.groupId === target.id)) {
+      setQuery({ search: "", filter: "all", folderId: null, groupId: null });
+      setMobilePane("list");
+    }
+    setDeleteTarget(null);
+  }
+
   function createFolder(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const name = newFolderName.trim();
     if (!name) return;
-    const folder: NoteFolder = { id: createId("folder"), name, parentId: null, color: "green", position: workspace.folders.length };
+    const folder: NoteFolder = { id: createId("folder"), name, parentId: null, color: newFolderColor, position: workspace.folders.length };
     setWorkspace((current) => ({ ...current, folders: [...current.folders, folder] }));
     setNewFolderName("");
+    setNewFolderColor("green");
     setCreatingFolder(false);
   }
 
@@ -287,9 +464,10 @@ export function NotesApp() {
     event.preventDefault();
     const name = newGroupName.trim();
     if (!name) return;
-    const group: Group = { id: createId("group"), name, color: workspace.groups.length % 2 ? "amber" : "green", position: workspace.groups.length };
+    const group: Group = { id: createId("group"), name, color: newGroupColor, position: workspace.groups.length };
     setWorkspace((current) => ({ ...current, groups: [...current.groups, group] }));
     setNewGroupName("");
+    setNewGroupColor("green");
     setCreatingGroup(false);
   }
 
@@ -400,6 +578,7 @@ export function NotesApp() {
     if (command === "search") window.setTimeout(() => searchRef.current?.focus(), 0);
     if (command === "pin" && selectedNoteId) setWorkspace((current) => ({ ...current, notes: togglePinned(current.notes, selectedNoteId) }));
     if (command === "archive" && selectedNoteId) setWorkspace((current) => ({ ...current, notes: toggleArchived(current.notes, selectedNoteId) }));
+    if (command === "sidebar") toggleSidebar();
     if (command === "shortcuts") setShortcutsDialogOpen(true);
   }
 
@@ -408,21 +587,43 @@ export function NotesApp() {
     { id: "search", label: "Search notes", description: "Jump to the note search field", shortcut: "⌘ ⇧ F", icon: Search },
     { id: "pin", label: selectedNote?.pinned ? "Unpin note" : "Pin note", description: "Keep the current note near the top", shortcut: "⌘ ⇧ P", icon: Pin },
     { id: "archive", label: selectedNote?.archived ? "Restore note" : "Archive note", description: "Move the current note out of the active list", shortcut: "", icon: Archive },
+    { id: "sidebar", label: sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar", description: "Show or hide sidebar labels", shortcut: "⌘ ⇧ B", icon: sidebarCollapsed ? PanelLeftOpen : PanelLeftClose },
     { id: "shortcuts", label: "Keyboard shortcuts", description: "See every keyboard action", shortcut: "?", icon: Keyboard },
   ].filter((command) => `${command.label} ${command.description}`.toLowerCase().includes(paletteQuery.toLowerCase()));
 
   if (authRequired) return <LoginScreen />;
 
   function sidebarButton(label: string, icon: React.ReactNode, active: boolean, onClick: () => void, count?: number, onDrop?: (event: React.DragEvent<HTMLButtonElement>) => void, itemKey?: string) {
-    return <button key={itemKey} type="button" className="nav-item" data-active={active} data-drop-target={onDrop ? "folder" : undefined} onClick={onClick} onDragOver={(event) => { if (!onDrop) return; event.preventDefault(); event.dataTransfer.dropEffect = "move"; }} onDrop={onDrop} aria-current={active ? "page" : undefined}>{icon}<span>{label}</span>{typeof count === "number" && <span className="count">{count}</span>}</button>;
+    return <button key={itemKey} type="button" className="nav-item" data-active={active} data-drop-target={onDrop ? "folder" : undefined} onClick={onClick} onDragOver={(event) => { if (!onDrop) return; event.preventDefault(); event.dataTransfer.dropEffect = "move"; }} onDrop={onDrop} aria-current={active ? "page" : undefined} title={label}>{icon}<span className="nav-item-label">{label}</span>{typeof count === "number" && <span className="count">{count}</span>}</button>;
+  }
+
+  function collectionRow(kind: CollectionKind, collection: NoteFolder | Group, count: number, onDrop?: (event: React.DragEvent<HTMLButtonElement>) => void) {
+    const target: CollectionTarget = { kind, id: collection.id };
+    const editing = editingCollectionSurface === "sidebar" && editingCollection?.kind === target.kind && editingCollection.id === target.id;
+    const collectionLabel = collectionKindLabel(kind);
+    return <div className="collection-nav-row" key={collection.id} data-editing={editing}>
+      {editing ? <form className="collection-rename-form" onSubmit={saveInlineCollectionRename}>
+        <Input ref={collectionRenameRef} value={collectionNameDraft} onChange={(event) => setCollectionNameDraft(event.target.value)} onBlur={commitInlineCollectionRename} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); setEditingCollection(null); setEditingCollectionSurface(null); } }} aria-label={`Rename ${collectionLabel}`} />
+        <Button type="submit" variant="ghost" size="icon-sm" aria-label={`Save ${collectionLabel} name`}><Check className="h-4 w-4" /></Button>
+      </form> : <>
+        <button type="button" className="nav-item collection-nav-item" data-active={(kind === "folder" ? query.folderId : query.groupId) === collection.id} data-drop-target={onDrop ? "folder" : undefined} onClick={() => selectNoteView({ search: "", filter: "all", folderId: kind === "folder" ? collection.id : null, groupId: kind === "group" ? collection.id : null })} onDoubleClick={() => beginCollectionRename(target, "sidebar")} onKeyDown={(event) => handleCollectionKeyDown(event, target, "sidebar")} onDragOver={(event) => { if (!onDrop) return; event.preventDefault(); event.dataTransfer.dropEffect = "move"; }} onDrop={onDrop} aria-current={(kind === "folder" ? query.folderId : query.groupId) === collection.id ? "page" : undefined} aria-keyshortcuts="F2 Delete" aria-label={`${collection.name}, ${collectionLabel}. Double-click or press F2 to rename`} title={`${collection.name} · ${collectionLabel}`}>
+          <CollectionShape kind={kind} color={collection.color} /><span className="nav-item-label">{collection.name}</span><span className="count">{count}</span>
+        </button>
+        <div className="collection-actions">
+          <Tooltip><TooltipTrigger asChild><Button type="button" variant="ghost" size="icon-sm" className="collection-action" aria-label={`Edit ${collectionLabel} label`} onClick={() => openCollectionEditor(target)}><Pencil className="h-3.5 w-3.5" /></Button></TooltipTrigger><TooltipContent>Edit {collectionLabel}</TooltipContent></Tooltip>
+          <Tooltip><TooltipTrigger asChild><Button type="button" variant="ghost" size="icon-sm" className="collection-action collection-delete-action" aria-label={`Delete ${collectionLabel} ${collection.name}`} onClick={() => requestCollectionDelete(target)}><Trash2 className="h-3.5 w-3.5" /></Button></TooltipTrigger><TooltipContent>Delete {collectionLabel}</TooltipContent></Tooltip>
+        </div>
+      </>}
+    </div>;
   }
 
   return (
     <TooltipProvider delayDuration={500}>
-      <div className="app-shell">
+      <div className="app-shell" data-sidebar-collapsed={sidebarCollapsed}>
         <header className="topbar">
           <div className="brand-lockup">
             <Button variant="ghost" size="icon-sm" className="mobile-only" aria-label="Open navigation" onClick={() => setMobilePane("sidebar")}><Menu className="h-4 w-4" /></Button>
+            <Tooltip><TooltipTrigger asChild><Button variant="ghost" size="icon-sm" className="desktop-only sidebar-toggle" aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"} onClick={toggleSidebar}>{sidebarCollapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}</Button></TooltipTrigger><TooltipContent>{sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}</TooltipContent></Tooltip>
             <span className="brand-mark" aria-hidden="true"><Layers3 className="h-4 w-4" /></span>
             <span>Notes</span>
           </div>
@@ -448,19 +649,19 @@ export function NotesApp() {
               </div>
 
               <div className="sidebar-section">
-                <div className="section-label"><span>Folders</span><button type="button" aria-label="Add folder" onClick={() => setCreatingFolder(true)}><FolderPlus className="h-3.5 w-3.5" /></button></div>
+                <div className="section-label"><span>Folders</span><button type="button" aria-label="Add folder" onClick={() => { setSidebarCollapsed(false); setCreatingFolder(true); }}><FolderPlus className="h-3.5 w-3.5" /></button></div>
                 <div className="folder-list">
-                  {workspace.folders.map((folder) => sidebarButton(folder.name, <span className={cn("folder-dot", colorClass(folder.color))} />, query.folderId === folder.id, () => selectNoteView({ search: "", filter: "all", folderId: folder.id, groupId: null }), workspace.notes.filter((note) => note.folderId === folder.id && !note.archived).length, (event) => handleFolderDrop(event, folder.id), folder.id))}
+                  {workspace.folders.map((folder) => collectionRow("folder", folder, workspace.notes.filter((note) => note.folderId === folder.id && !note.archived).length, (event) => handleFolderDrop(event, folder.id)))}
                 </div>
-                {creatingFolder && <form className="inline-create" onSubmit={createFolder}><Input autoFocus value={newFolderName} onChange={(event) => setNewFolderName(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") setCreatingFolder(false); }} placeholder="Folder name" aria-label="New folder name" /><Button type="submit" size="icon-sm" aria-label="Create folder"><Check className="h-4 w-4" /></Button></form>}
+                {creatingFolder && <form className="inline-create" onSubmit={createFolder}><Input autoFocus value={newFolderName} onChange={(event) => setNewFolderName(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") setCreatingFolder(false); }} placeholder="Folder name" aria-label="New folder name" /><select className="collection-label-select" aria-label="Folder label" value={newFolderColor} onChange={(event) => setNewFolderColor(normalizeCollectionColor(event.target.value))}>{collectionLabelOptions.map((option) => <option value={option.id} key={option.id}>{option.name}</option>)}</select><Button type="submit" size="icon-sm" aria-label="Create folder"><Check className="h-4 w-4" /></Button></form>}
               </div>
 
               <div className="sidebar-section">
-                <div className="section-label"><span>Groups</span><button type="button" aria-label="Add group" onClick={() => setCreatingGroup(true)}><Plus className="h-3.5 w-3.5" /></button></div>
+                <div className="section-label"><span>Groups</span><button type="button" aria-label="Add group" onClick={() => { setSidebarCollapsed(false); setCreatingGroup(true); }}><Plus className="h-3.5 w-3.5" /></button></div>
                 <div className="group-list">
-                  {workspace.groups.map((group) => sidebarButton(group.name, <span className={cn("group-dot", colorClass(group.color))} />, query.groupId === group.id, () => selectNoteView({ search: "", filter: "all", folderId: null, groupId: group.id }), workspace.notes.filter((note) => note.groupId === group.id && !note.archived).length, undefined, group.id))}
+                  {workspace.groups.map((group) => collectionRow("group", group, workspace.notes.filter((note) => note.groupId === group.id && !note.archived).length))}
                 </div>
-                {creatingGroup && <form className="inline-create" onSubmit={createGroup}><Input autoFocus value={newGroupName} onChange={(event) => setNewGroupName(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") setCreatingGroup(false); }} placeholder="Group name" aria-label="New group name" /><Button type="submit" size="icon-sm" aria-label="Create group"><Check className="h-4 w-4" /></Button></form>}
+                {creatingGroup && <form className="inline-create" onSubmit={createGroup}><Input autoFocus value={newGroupName} onChange={(event) => setNewGroupName(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") setCreatingGroup(false); }} placeholder="Group name" aria-label="New group name" /><select className="collection-label-select" aria-label="Group label" value={newGroupColor} onChange={(event) => setNewGroupColor(normalizeCollectionColor(event.target.value))}>{collectionLabelOptions.map((option) => <option value={option.id} key={option.id}>{option.name}</option>)}</select><Button type="submit" size="icon-sm" aria-label="Create group"><Check className="h-4 w-4" /></Button></form>}
               </div>
 
               <div className="sidebar-section">
@@ -475,7 +676,10 @@ export function NotesApp() {
 
           <section className="note-list" aria-label="Notes">
             <div className="note-list-header">
-              <div className="list-title-row"><h1>{query.folderId ? workspace.folders.find((folder) => folder.id === query.folderId)?.name : query.groupId ? workspace.groups.find((group) => group.id === query.groupId)?.name : query.filter === "inbox" ? "Inbox" : query.filter === "pinned" ? "Pinned" : query.filter === "archived" ? "Archive" : "All notes"}</h1><span>{filteredNotes.length}</span></div>
+              <div className="list-title-row">
+                {activeCollection && activeCollectionTarget ? (editingCollectionSurface === "title" && editingCollection?.kind === activeCollectionTarget.kind && editingCollection.id === activeCollectionTarget.id ? <form className="list-title-form" onSubmit={saveInlineCollectionRename}><Input ref={collectionRenameRef} autoFocus value={collectionNameDraft} onChange={(event) => setCollectionNameDraft(event.target.value)} onBlur={commitInlineCollectionRename} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); setEditingCollection(null); setEditingCollectionSurface(null); } }} aria-label={`Rename ${collectionKindLabel(activeCollectionTarget.kind)}`} /></form> : <button type="button" className="list-title-button" onDoubleClick={() => beginCollectionRename(activeCollectionTarget, "title")} onKeyDown={(event) => handleCollectionKeyDown(event, activeCollectionTarget, "title")} aria-keyshortcuts="F2 Delete" aria-label={`${activeCollection.name}, ${collectionKindLabel(activeCollectionTarget.kind)}. Double-click or press F2 to rename`}><CollectionShape kind={activeCollectionTarget.kind} color={activeCollection.color} /><span>{activeCollection.name}</span></button>) : <h1>{listTitle}</h1>}
+                <span>{filteredNotes.length}</span>
+              </div>
               <div className="relative">
                 <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
                 <Input ref={searchRef} value={query.search} onChange={(event) => setQuery((current) => ({ ...current, search: event.target.value }))} placeholder="Search notes" aria-label="Search notes" className="h-9 pl-9 pr-14" />
@@ -559,10 +763,28 @@ export function NotesApp() {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={Boolean(collectionEditor)} onOpenChange={(open) => { if (!open) setCollectionEditor(null); }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Edit {collectionEditor ? collectionTargetLabel(collectionEditor).toLocaleLowerCase() : "collection"}</DialogTitle><DialogDescription>Rename this collection or choose its visual label.</DialogDescription></DialogHeader>
+          <form className="dialog-form" onSubmit={saveCollectionEditor}>
+            <div className="dialog-field"><label htmlFor="collection-editor-name">Name</label><Input id="collection-editor-name" autoFocus value={collectionEditorName} onChange={(event) => setCollectionEditorName(event.target.value)} /></div>
+            <fieldset className="collection-label-fieldset"><legend>Label</legend><div className="collection-label-options" role="radiogroup" aria-label="Collection label">{collectionLabelOptions.map((option) => <button type="button" role="radio" className="collection-label-option" data-color={option.id} data-active={collectionEditorColor === option.id} aria-label={`${option.name} label`} aria-checked={collectionEditorColor === option.id} key={option.id} onClick={() => setCollectionEditorColor(option.id)}><span className={cn("collection-label-swatch", option.id)} aria-hidden="true" /><span>{option.name}</span></button>)}</div></fieldset>
+            <DialogFooter><Button type="button" variant="outline" onClick={() => setCollectionEditor(null)}>Cancel</Button><Button type="submit"><Check className="h-4 w-4" />Save changes</Button></DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(deleteTarget)} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Delete {deleteTarget ? collectionTargetLabel(deleteTarget).toLocaleLowerCase() : "collection"}?</DialogTitle><DialogDescription>{deleteTarget && findCollection(deleteTarget) ? <>{findCollection(deleteTarget)?.name} will be removed. Notes will move to Inbox or become ungrouped.</> : "This collection will be removed."}</DialogDescription></DialogHeader>
+          <DialogFooter><Button type="button" variant="outline" onClick={() => setDeleteTarget(null)}>Cancel</Button><Button type="button" variant="destructive" onClick={confirmCollectionDelete}><Trash2 className="h-4 w-4" />Delete {deleteTarget ? collectionTargetLabel(deleteTarget).toLocaleLowerCase() : "collection"}</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={shortcutsDialogOpen} onOpenChange={setShortcutsDialogOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>Keyboard shortcuts</DialogTitle><DialogDescription>Every core workflow stays available without a pointer.</DialogDescription></DialogHeader>
-          <div className="grid gap-2 text-sm">{[["⌘ / Ctrl K", "Open command palette"], ["⌘ / Ctrl N", "New note"], ["⌘ / Ctrl ⇧ F", "Focus search"], ["⌘ / Ctrl S", "Save current workspace"], ["↑ / ↓", "Move through notes"], ["Enter", "Open selected note"], ["Escape", "Close dialogs and menus"]].map(([shortcut, label]) => <div className="flex items-center justify-between gap-4 rounded-md bg-muted px-3 py-2" key={shortcut}><span>{label}</span><kbd className="rounded border border-border bg-background px-2 py-1 text-xs text-muted-foreground">{shortcut}</kbd></div>)}</div>
+          <div className="grid gap-2 text-sm">{[["⌘ / Ctrl K", "Open command palette"], ["⌘ / Ctrl N", "New note"], ["⌘ / Ctrl ⇧ F", "Focus search"], ["⌘ / Ctrl ⇧ B", "Collapse sidebar"], ["⌘ / Ctrl S", "Save current workspace"], ["F2", "Rename focused folder or group"], ["Delete", "Delete focused folder or group"], ["↑ / ↓", "Move through notes"], ["Enter", "Open selected note"], ["Escape", "Close dialogs and menus"]].map(([shortcut, label]) => <div className="flex items-center justify-between gap-4 rounded-md bg-muted px-3 py-2" key={shortcut}><span>{label}</span><kbd className="rounded border border-border bg-background px-2 py-1 text-xs text-muted-foreground">{shortcut}</kbd></div>)}</div>
         </DialogContent>
       </Dialog>
     </TooltipProvider>

@@ -31,7 +31,7 @@ Avoid SaaS dashboard clutter: nested cards, decorative gradients, excessive roun
 - Capture first: create and edit a note with minimal friction.
 - Keyboard parity: every core mouse action has a discoverable keyboard path.
 - Private by default: self-hosting, storage, and account boundaries remain clear.
-- Structure without ceremony: folders, groups, filters, and search stay close to the content.
+- Structure without ceremony: folders represent a note's physical location and hierarchy; groups act as project hubs containing folders and direct notes.
 - Portable foundations: use open interfaces and replaceable adapters so local and hosted deployments behave alike.
 
 ## Accessibility & Inclusion

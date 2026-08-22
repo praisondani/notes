@@ -396,9 +396,35 @@ button:disabled {
   margin-top: 2px;
 }
 
+.folder-tree-node {
+  display: grid;
+  gap: 2px;
+}
+
+.folder-tree-node > .folder-tree-node {
+  margin-left: 14px;
+  border-left: 1px solid var(--border);
+  padding-left: 8px;
+}
+
+.group-hub {
+  display: grid;
+  gap: 2px;
+}
+
+.group-folder-list {
+  display: grid;
+  gap: 2px;
+  margin-left: 8px;
+  border-left: 1px solid var(--border);
+  padding-left: 8px;
+}
+
 .nav-item,
 .folder-item,
 .group-item {
+  display: flex;
+  align-items: center;
   min-height: 34px;
   width: 100%;
   gap: 9px;
@@ -412,6 +438,9 @@ button:disabled {
 .collection-nav-item {
   min-width: 0;
   flex: 1;
+  align-items: flex-start;
+  padding-top: 7px;
+  padding-bottom: 7px;
 }
 
 .nav-item-label {
@@ -419,6 +448,24 @@ button:disabled {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.collection-nav-item .collection-name {
+  overflow: visible;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
+  line-height: 1.25;
+}
+
+.collection-nav-item .collection-shape,
+.collection-nav-item .count {
+  margin-top: 2px;
+}
+
+.collection-nav-item .count {
+  align-self: flex-start;
+  flex: none;
 }
 
 .collection-actions {
@@ -436,10 +483,6 @@ button:disabled {
 
 .collection-action {
   color: var(--muted-foreground);
-}
-
-.collection-delete-action:hover {
-  color: var(--destructive);
 }
 
 .nav-item:hover,
@@ -513,6 +556,62 @@ button:disabled {
   background: oklch(0.62 0.16 12);
 }
 
+.collection-shape.violet {
+  color: oklch(0.58 0.16 300);
+}
+
+.collection-color-dot.violet,
+.collection-label-swatch.violet {
+  background: oklch(0.58 0.16 300);
+}
+
+.collection-shape.cyan {
+  color: oklch(0.62 0.12 210);
+}
+
+.collection-color-dot.cyan,
+.collection-label-swatch.cyan {
+  background: oklch(0.62 0.12 210);
+}
+
+.collection-shape.orange {
+  color: oklch(0.64 0.17 50);
+}
+
+.collection-color-dot.orange,
+.collection-label-swatch.orange {
+  background: oklch(0.64 0.17 50);
+}
+
+.collection-shape.indigo {
+  color: oklch(0.55 0.15 270);
+}
+
+.collection-color-dot.indigo,
+.collection-label-swatch.indigo {
+  background: oklch(0.55 0.15 270);
+}
+
+.collection-color-dot.green {
+  background: var(--primary);
+}
+
+.collection-color-dot.amber {
+  background: var(--accent);
+}
+
+.collection-color-dot.slate {
+  background: var(--muted-foreground);
+}
+
+.collection-color-dot.blue {
+  background: oklch(0.58 0.14 245);
+}
+
+.collection-color-dot.rose {
+  background: oklch(0.62 0.16 12);
+}
+
 .collection-shape.group-shape {
   stroke-width: 2.5;
 }
@@ -525,17 +624,53 @@ button:disabled {
 
 .inline-create input {
   min-width: 0;
+  width: 100%;
+  flex: 1;
 }
 
-.collection-label-select {
-  width: 74px;
-  min-width: 74px;
-  border: 1px solid var(--input);
-  border-radius: 6px;
-  background: var(--background);
-  padding: 0 5px;
+.collection-color-trigger {
+  align-self: flex-start;
+  flex: none;
+  margin-top: 3px;
   color: var(--muted-foreground);
-  font-size: 11px;
+}
+
+.collection-color-trigger:hover,
+.collection-color-trigger:focus-visible {
+  color: var(--foreground);
+}
+
+.collection-color-menu {
+  min-width: 0;
+  padding: 8px;
+}
+
+.collection-color-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 28px);
+  gap: 6px;
+}
+
+.collection-color-option {
+  display: grid;
+  height: 28px;
+  width: 28px;
+  place-items: center;
+  border-radius: 999px;
+  padding: 0;
+}
+
+.collection-color-option[data-active="true"] {
+  background: var(--muted);
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+
+.collection-color-dot {
+  height: 18px;
+  width: 18px;
+  border: 1px solid oklch(0.2 0.02 160 / 0.18);
+  border-radius: 999px;
 }
 
 .collection-rename-form {
@@ -587,11 +722,6 @@ button:disabled {
   text-wrap: balance;
 }
 
-.list-title-row > span {
-  color: var(--muted-foreground);
-  font-size: 12px;
-}
-
 .list-title-button,
 .list-title-form {
   min-width: 0;
@@ -629,6 +759,15 @@ button:disabled {
 .list-title-add:hover,
 .list-title-add:focus-visible {
   color: var(--foreground);
+}
+
+.list-title-delete:hover,
+.list-title-delete:focus-visible {
+  color: var(--destructive);
+}
+
+.list-title-overflow {
+  flex: none;
 }
 
 .list-title-button > span:last-child {
@@ -864,6 +1003,7 @@ button:disabled {
 }
 
 .content-editor {
+  height: auto;
   min-height: 300px;
   margin-top: 38px;
   border: 0;
@@ -872,6 +1012,7 @@ button:disabled {
   color: var(--foreground);
   font-size: 16px;
   line-height: 1.8;
+  overflow: hidden;
   resize: none;
 }
 

@@ -2,15 +2,16 @@
 
 Notes is a minimal, self-hostable private note workspace for text, images, files, links, checklists, folders, groups, filters, and search. It runs in a browser and keeps keyboard and mouse actions at parity.
 
-Version `0.4.0` adds browser-based OAuth for MCP agents, PKCE authorization, token rotation and revocation, and connected-agent controls in Settings. Group collaboration, sync conflict resolution, and native clients are future work.
+Version `0.5.0` adds project-hub groups with group-owned folder trees, direct group notes, and backward-compatible workspace migration. Browser-based OAuth for MCP agents, PKCE authorization, token rotation and revocation, and connected-agent controls are included; sync conflict resolution and native clients remain future work.
 
 ## Features
 
 - Three-pane desktop workspace with a focused editor.
 - Responsive mobile layout with explicit pane navigation.
 - Text notes, checklists, tags, links, images, and files.
-- Folders, groups, pinned notes, archive, filters, and full-text search across note metadata.
-- Native drag-and-drop for moving notes into folders and reordering the note list.
+- Groups act as project hubs for direct notes and their folder trees; folders remain each note's physical location.
+- Pinned notes, archive, filters, and full-text search across note metadata.
+- Native drag-and-drop for moving notes into folders or group roots and reordering the note list.
 - Keyboard parity: `⌘/Ctrl K`, `⌘/Ctrl N`, `⌘/Ctrl Shift F`, `⌘/Ctrl Shift P`, `⌘/Ctrl S`, arrows, Enter, and Escape.
 - Local JSON persistence by default; S3-compatible object storage for attachments.
 - Owner account with username or email sign-in, salted password hashes, signed sessions, same-origin checks, login throttling, and password rotation.

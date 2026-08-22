@@ -2,6 +2,18 @@
 
 All notable changes are documented here.
 
+## [0.5.0] - 2026-08-22
+
+### Added
+
+- Groups are now project hubs that contain direct notes and group-owned folder trees.
+- Group-aware folder creation, note placement, drag-and-drop, MCP CRUD, and deletion behavior.
+
+### Changed
+
+- Workspace schema migrated to version 2 with backward-compatible legacy workspace normalization.
+- Deleting a group makes its folders global while preserving notes in their folder locations.
+
 ## [0.4.0] - 2026-08-21
 
 ### Added

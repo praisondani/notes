@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { isAuthenticated } from "@/lib/auth";
 import { ensureWorkspace } from "@/lib/notes";
 import { loadWorkspace, saveWorkspace } from "@/lib/store";
-import type { Workspace } from "@/lib/types";
+import type { WorkspaceInput } from "@/lib/types";
 
 export async function GET() {
   if (!(await isAuthenticated())) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
@@ -11,8 +11,8 @@ export async function GET() {
 
 export async function PUT(request: Request) {
   if (!(await isAuthenticated())) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
-  const payload = await request.json() as Workspace;
-  if (payload?.version !== 1 || !Array.isArray(payload.notes) || !Array.isArray(payload.folders) || !Array.isArray(payload.groups)) {
+  const payload = await request.json() as WorkspaceInput;
+  if (!payload || ![1, 2].includes(payload.version ?? 0) || !Array.isArray(payload.notes) || !Array.isArray(payload.folders) || !Array.isArray(payload.groups)) {
     return NextResponse.json({ error: "Invalid workspace payload" }, { status: 400 });
   }
   const workspace = ensureWorkspace(payload);

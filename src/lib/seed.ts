@@ -1,11 +1,11 @@
 import type { Workspace } from "@/lib/types";
 
 export const seedWorkspace: Workspace = {
-  version: 1,
+  version: 2,
   folders: [
-    { id: "folder-projects", name: "Projects", parentId: null, color: "green", position: 0 },
-    { id: "folder-reading", name: "Reading list", parentId: null, color: "amber", position: 1 },
-    { id: "folder-home", name: "Home", parentId: null, color: "slate", position: 2 },
+    { id: "folder-projects", name: "Projects", parentId: null, groupId: "group-work", color: "green", position: 0 },
+    { id: "folder-reading", name: "Reading list", parentId: null, groupId: "group-personal", color: "amber", position: 1 },
+    { id: "folder-home", name: "Home", parentId: null, groupId: null, color: "slate", position: 2 },
   ],
   groups: [
     { id: "group-work", name: "Work", color: "green", position: 0 },

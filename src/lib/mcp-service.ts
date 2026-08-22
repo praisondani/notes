@@ -127,6 +127,7 @@ export type RagOptions = SearchOptions & {
 export type FolderInput = {
   name: string;
   parentId?: string | null;
+  groupId?: string | null;
   color?: string;
 };
 
@@ -269,7 +270,7 @@ function validateGroupReference(workspace: Workspace, groupId: string | null | u
   }
 }
 
-function normalizeNotePatch(input: NoteCreateInput | NoteUpdateInput, workspace: Workspace): Partial<Note> {
+function normalizeNotePatch(input: NoteCreateInput | NoteUpdateInput, workspace: Workspace, existing?: Note): Partial<Note> {
   const patch: Partial<Note> = {};
   if (input.title !== undefined) patch.title = textValue(input.title, "Title", MAX_TITLE_LENGTH).trim();
   if (input.content !== undefined) patch.content = textValue(input.content, "Content", MAX_CONTENT_LENGTH, true);
@@ -280,6 +281,16 @@ function normalizeNotePatch(input: NoteCreateInput | NoteUpdateInput, workspace:
   if (input.groupId !== undefined) {
     patch.groupId = optionalId(input.groupId, "Group ID") ?? null;
     validateGroupReference(workspace, patch.groupId);
+  }
+  if (input.folderId !== undefined || input.groupId !== undefined) {
+    const nextFolderId = input.folderId === undefined ? existing?.folderId ?? null : patch.folderId ?? null;
+    const folder = nextFolderId === null ? undefined : workspace.folders.find((candidate) => candidate.id === nextFolderId);
+    const nextGroupId = input.groupId === undefined ? existing?.groupId ?? null : patch.groupId ?? null;
+    if (folder && input.groupId === undefined) {
+      patch.groupId = folder.groupId;
+    } else if (folder && nextGroupId !== folder.groupId) {
+      fail("Folder and group must belong to the same group");
+    }
   }
   if (input.tags !== undefined) patch.tags = normalizeTags(input.tags);
   if (input.checklist !== undefined) patch.checklist = normalizeChecklist(input.checklist);
@@ -382,7 +393,7 @@ export async function updateNoteRecord(noteId: string, input: NoteUpdateInput): 
   const workspace = await updateWorkspace((current) => {
     const existing = current.notes.find((note) => note.id === id);
     if (!existing) fail("Note not found");
-    const patch = normalizeNotePatch(input, current);
+    const patch = normalizeNotePatch(input, current, existing);
     updated = { ...existing, ...patch, updatedAt: new Date().toISOString() };
     return { ...current, notes: current.notes.map((note) => note.id === id ? updated as Note : note) };
   });
@@ -562,8 +573,14 @@ export async function createFolderRecord(input: FolderInput): Promise<Folder> {
   const workspace = await updateWorkspace((current) => {
     const name = textValue(input.name, "Folder name", MAX_FOLDER_NAME_LENGTH).trim();
     const parentId = optionalId(input.parentId, "Parent folder ID") ?? null;
-    if (parentId !== null && !current.folders.some((folder) => folder.id === parentId)) fail("Parent folder not found");
-    created = { id: createId("folder"), name, parentId, color: normalizeColor(input.color, "slate"), position: current.folders.length };
+    const parent = parentId === null ? undefined : current.folders.find((folder) => folder.id === parentId);
+    if (parentId !== null && !parent) fail("Parent folder not found");
+    const groupId = input.groupId === undefined
+      ? parent?.groupId ?? null
+      : optionalId(input.groupId, "Group ID") ?? null;
+    validateGroupReference(current, groupId);
+    if (parent && parent.groupId !== groupId) fail("A nested folder must belong to the same group as its parent");
+    created = { id: createId("folder"), name, parentId, groupId, color: normalizeColor(input.color, "slate"), position: current.folders.length };
     return { ...current, folders: [...current.folders, created] };
   });
   return clone(created ?? workspace.folders[workspace.folders.length - 1]);
@@ -588,17 +605,45 @@ export async function updateFolderRecord(folderId: string, input: FolderUpdateIn
     const existing = current.folders.find((folder) => folder.id === id);
     if (!existing) fail("Folder not found");
     const parentId = input.parentId === undefined ? existing.parentId : optionalId(input.parentId, "Parent folder ID") ?? null;
-    if (parentId !== null && !current.folders.some((folder) => folder.id === parentId)) fail("Parent folder not found");
+    const parent = parentId === null ? undefined : current.folders.find((folder) => folder.id === parentId);
+    if (parentId !== null && !parent) fail("Parent folder not found");
     validateParent(id, parentId, current.folders);
+    const groupId = input.groupId === undefined ? existing.groupId : optionalId(input.groupId, "Group ID") ?? null;
+    validateGroupReference(current, groupId);
+    if (parent && parent.groupId !== groupId) fail("A nested folder must belong to the same group as its parent");
     const position = input.position === undefined ? existing.position : boundedInteger(input.position, "Position", 0, Number.MAX_SAFE_INTEGER);
     updated = {
       ...existing,
       ...(input.name === undefined ? {} : { name: textValue(input.name, "Folder name", MAX_FOLDER_NAME_LENGTH).trim() }),
       parentId,
+      groupId,
       ...(input.color === undefined ? {} : { color: normalizeColor(input.color, existing.color) }),
       position,
     };
-    return { ...current, folders: current.folders.map((folder) => folder.id === id ? updated as Folder : folder) };
+    const descendants = new Set<string>();
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const folder of current.folders) {
+        if (folder.parentId && (folder.parentId === id || descendants.has(folder.parentId)) && !descendants.has(folder.id)) {
+          descendants.add(folder.id);
+          changed = true;
+        }
+      }
+    }
+    const affectedFolderIds = new Set([id, ...descendants]);
+    const nextFolders = current.folders.map((folder) => folder.id === id
+      ? updated as Folder
+      : descendants.has(folder.id) && folder.groupId !== groupId
+        ? { ...folder, groupId }
+        : folder);
+    return {
+      ...current,
+      folders: nextFolders,
+      notes: current.notes.map((note) => note.folderId !== null && affectedFolderIds.has(note.folderId) && note.groupId !== groupId
+        ? { ...note, groupId, updatedAt: new Date().toISOString() }
+        : note),
+    };
   });
   return clone(updated ?? workspace.folders.find((folder) => folder.id === id) as Folder);
 }
@@ -650,19 +695,22 @@ export async function updateGroupRecord(groupId: string, input: GroupUpdateInput
   return clone(updated ?? workspace.groups.find((group) => group.id === id) as Group);
 }
 
-export async function deleteGroupRecord(groupId: string): Promise<{ id: string; deleted: true; detachedNoteCount: number }> {
+export async function deleteGroupRecord(groupId: string): Promise<{ id: string; deleted: true; detachedNoteCount: number; detachedFolderCount: number }> {
   const id = textValue(groupId, "Group ID", 200);
   let detachedNoteCount = 0;
+  let detachedFolderCount = 0;
   await updateWorkspace((workspace) => {
     if (!workspace.groups.some((group) => group.id === id)) fail("Group not found");
     detachedNoteCount = workspace.notes.filter((note) => note.groupId === id).length;
+    detachedFolderCount = workspace.folders.filter((folder) => folder.groupId === id).length;
     return {
       ...workspace,
       groups: workspace.groups.filter((group) => group.id !== id),
+      folders: workspace.folders.map((folder) => folder.groupId === id ? { ...folder, groupId: null } : folder),
       notes: workspace.notes.map((note) => note.groupId === id ? { ...note, groupId: null, updatedAt: new Date().toISOString() } : note),
     };
   });
-  return { id, deleted: true, detachedNoteCount };
+  return { id, deleted: true, detachedNoteCount, detachedFolderCount };
 }
 
 export async function workspaceSummary(): Promise<{

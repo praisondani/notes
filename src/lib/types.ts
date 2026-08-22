@@ -36,8 +36,13 @@ export type Folder = {
   id: string;
   name: string;
   parentId: string | null;
+  groupId: string | null;
   color: string;
   position: number;
+};
+
+export type WorkspaceFolder = Omit<Folder, "groupId"> & {
+  groupId?: string | null;
 };
 
 export type Group = {
@@ -48,9 +53,16 @@ export type Group = {
 };
 
 export type Workspace = {
-  version: 1;
+  version: 2;
   notes: Note[];
   folders: Folder[];
+  groups: Group[];
+};
+
+export type WorkspaceInput = {
+  version?: number;
+  notes: Note[];
+  folders: WorkspaceFolder[];
   groups: Group[];
 };
 

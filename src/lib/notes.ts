@@ -1,4 +1,4 @@
-import type { ChecklistItem, Note, NoteFilter, NoteQuery, Workspace } from "@/lib/types";
+import type { ChecklistItem, Note, NoteFilter, NoteQuery, Workspace, WorkspaceInput } from "@/lib/types";
 
 export function createId(prefix: string): string {
   const random = typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -153,13 +153,73 @@ export function toggleChecklist(notes: Note[], noteId: string, itemId: string, n
     : note);
 }
 
-export function ensureWorkspace(workspace: Workspace): Workspace {
-  return {
-    version: 1,
-    notes: Array.isArray(workspace.notes) ? workspace.notes : [],
-    folders: Array.isArray(workspace.folders) ? workspace.folders : [],
-    groups: Array.isArray(workspace.groups) ? workspace.groups : [],
-  };
+export function ensureWorkspace(workspace: WorkspaceInput): Workspace {
+  const notes = Array.isArray(workspace.notes) ? workspace.notes : [];
+  const groups = Array.isArray(workspace.groups) ? workspace.groups : [];
+  const groupIds = new Set(groups.map((group) => group.id));
+  const migratingLegacyFolders = (workspace.version ?? 1) < 2;
+  const rawFolders = Array.isArray(workspace.folders) ? workspace.folders : [];
+  const inferredGroupIds = new Map<string, string | null>();
+
+  for (const folder of rawFolders) {
+    const noteGroupIds = new Set(
+      notes
+        .filter((note) => note.folderId === folder.id && note.groupId !== null && groupIds.has(note.groupId))
+        .map((note) => note.groupId),
+    );
+    inferredGroupIds.set(folder.id, noteGroupIds.size === 1 ? [...noteGroupIds][0] ?? null : null);
+  }
+
+  const folders = rawFolders.map((folder) => {
+    const explicitGroupId = folder.groupId !== undefined && folder.groupId !== null && groupIds.has(folder.groupId)
+      ? folder.groupId
+      : null;
+    const shouldInferGroup = migratingLegacyFolders || folder.groupId === undefined;
+    const parentId = folder.parentId && folder.parentId !== folder.id && rawFolders.some((candidate) => candidate.id === folder.parentId)
+      ? folder.parentId
+      : null;
+    return { ...folder, parentId, groupId: shouldInferGroup ? inferredGroupIds.get(folder.id) ?? explicitGroupId : explicitGroupId };
+  });
+
+  const folderMap = new Map(folders.map((folder) => [folder.id, folder]));
+  for (const folder of folders) {
+    const visited = new Set([folder.id]);
+    let parentId = folder.parentId;
+    while (parentId) {
+      if (visited.has(parentId)) {
+        folder.parentId = null;
+        break;
+      }
+      visited.add(parentId);
+      parentId = folderMap.get(parentId)?.parentId ?? null;
+    }
+  }
+
+  for (let pass = 0; pass < folders.length; pass += 1) {
+    let changed = false;
+    for (const folder of folders) {
+      const parent = folder.parentId === null ? undefined : folderMap.get(folder.parentId);
+      if (!parent) continue;
+      if (parent.groupId !== null && folder.groupId !== parent.groupId) {
+        folder.groupId = parent.groupId;
+        changed = true;
+      } else if (parent.groupId === null && folder.groupId !== null) {
+        folder.parentId = null;
+        changed = true;
+      }
+    }
+    if (!changed) break;
+  }
+
+  const normalizedNotes = notes.map((note) => {
+    const folder = note.folderId === null ? undefined : folderMap.get(note.folderId);
+    if (!folder) return note.folderId === null ? note : { ...note, folderId: null };
+    if (folder.groupId !== null && note.groupId !== folder.groupId) return { ...note, groupId: folder.groupId };
+    if (folder.groupId === null && note.groupId !== null) return { ...note, folderId: null };
+    return note;
+  });
+
+  return { version: 2, notes: normalizedNotes, folders, groups };
 }
 
 export function workspaceHasNote(workspace: Workspace, noteId: string): boolean {

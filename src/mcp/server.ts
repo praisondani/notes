@@ -87,6 +87,7 @@ const ragInputSchema = searchInputSchema.extend({
 const folderInputSchema = z.object({
   name: z.string().min(1).max(120),
   parent_id: identifier.nullable().optional(),
+  group_id: identifier.nullable().optional(),
   color: z.string().min(1).max(32).optional(),
 });
 const updateFolderInputSchema = folderInputSchema.partial().extend({
@@ -166,7 +167,7 @@ function mapNoteInput(input: NoteToolInput) {
 }
 
 function mapFolderInput(input: FolderInput) {
-  return { name: input.name, parentId: input.parent_id, color: input.color };
+  return { name: input.name, parentId: input.parent_id, groupId: input.group_id, color: input.color };
 }
 
 function mapGroupInput(input: GroupInput) {
@@ -174,7 +175,7 @@ function mapGroupInput(input: GroupInput) {
 }
 
 export function createMcpServer(context: McpServerContext): McpServer {
-  const server = new McpServer({ name: "notes", version: "0.4.0" });
+  const server = new McpServer({ name: "notes", version: "0.5.0" });
 
   server.registerTool("workspace_summary", {
     title: "Workspace summary",
@@ -269,54 +270,55 @@ export function createMcpServer(context: McpServerContext): McpServer {
 
   server.registerTool("list_folders", {
     title: "List folders",
-    description: "Read the folder hierarchy used by the workspace.",
+    description: "Read the folder hierarchy. Folders may be global or owned by a group hub.",
     inputSchema: z.object({}),
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, async () => execute(context, "notes:read", listFolders));
 
   server.registerTool("create_folder", {
     title: "Create folder",
-    description: "Create a folder, optionally nested under another folder.",
+    description: "Create a global folder or a group-owned project folder, optionally nested under another folder in the same group.",
     inputSchema: folderInputSchema,
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
   }, async (input: FolderInput) => execute(context, "notes:write", () => createFolderRecord(mapFolderInput(input))));
 
   server.registerTool("update_folder", {
     title: "Update folder",
-    description: "Rename, recolor, reorder, or move a folder while preventing hierarchy cycles.",
+    description: "Rename, recolor, reorder, move, or change the group hub for a folder while preventing hierarchy cycles and cross-group nesting.",
     inputSchema: updateFolderInputSchema,
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
   }, async (input: UpdateFolderInput) => execute(context, "notes:write", () => updateFolderRecord(input.folder_id, {
     name: input.name,
     parentId: input.parent_id,
+    groupId: input.group_id,
     color: input.color,
     position: input.position,
   })));
 
   server.registerTool("delete_folder", {
     title: "Delete folder",
-    description: "Delete a folder and move its notes to Inbox; child folders become top-level folders.",
+    description: "Delete a folder and move its notes to the group root or Inbox; child folders become top-level folders in their existing hub.",
     inputSchema: deleteFolderInputSchema,
     annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
   }, async (input: { folder_id: string }) => execute(context, "notes:write", () => deleteFolderRecord(input.folder_id)));
 
   server.registerTool("list_groups", {
     title: "List groups",
-    description: "Read note groups.",
+    description: "Read project hubs containing direct notes and group-owned folders.",
     inputSchema: z.object({}),
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, async () => execute(context, "notes:read", listGroups));
 
   server.registerTool("create_group", {
     title: "Create group",
-    description: "Create a note group.",
+    description: "Create a project hub for direct notes and folders.",
     inputSchema: groupInputSchema,
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
   }, async (input: GroupInput) => execute(context, "notes:write", () => createGroupRecord(mapGroupInput(input))));
 
   server.registerTool("update_group", {
     title: "Update group",
-    description: "Rename, recolor, or reorder a note group.",
+    description: "Rename, recolor, or reorder a project hub.",
     inputSchema: updateGroupInputSchema,
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
   }, async (input: UpdateGroupInput) => execute(context, "notes:write", () => updateGroupRecord(input.group_id, {
@@ -327,7 +329,7 @@ export function createMcpServer(context: McpServerContext): McpServer {
 
   server.registerTool("delete_group", {
     title: "Delete group",
-    description: "Delete a group and clear its group reference from notes.",
+    description: "Delete a project hub, make its folders global, and clear the group reference from its direct and folder notes.",
     inputSchema: deleteGroupInputSchema,
     annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
   }, async (input: { group_id: string }) => execute(context, "notes:write", () => deleteGroupRecord(input.group_id)));

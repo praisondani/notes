@@ -1,13 +1,12 @@
 "use client";
 /* eslint-disable @next/next/no-img-element */
 
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ChangeEvent, type FormEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ChangeEvent, type FormEvent } from "react";
 import Link from "next/link";
 import {
   Archive,
   ArchiveRestore,
   ArrowLeft,
-  Check,
   ChevronDown,
   ChevronUp,
   Command as CommandIcon,
@@ -24,9 +23,9 @@ import {
   ListChecks,
   Menu,
   Moon,
+  MoreVertical,
   PanelLeftClose,
   PanelLeftOpen,
-  Pencil,
   Paperclip,
   Pin,
   PinOff,
@@ -42,11 +41,12 @@ import { Badge } from "@/components/ui/badge";
 import { LoginScreen } from "@/components/login-screen";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { createId, createNote, filterNotes, getNotePreview, isNoteEmpty, moveNote, reorderChecklist, reorderNotes, toggleArchived, toggleChecklist, togglePinned, updateNote, withDerivedTitle } from "@/lib/notes";
+import { createId, createNote, filterNotes, getNotePreview, isNoteEmpty, reorderChecklist, reorderNotes, toggleArchived, toggleChecklist, togglePinned, updateNote, withDerivedTitle } from "@/lib/notes";
 import type { Attachment, Folder as NoteFolder, Group, Note, NoteFilter, NoteQuery, Workspace } from "@/lib/types";
 import { applyTheme, readThemePreference, resolveDarkTheme, setThemePreference as saveThemePreference, type ThemePreference } from "@/lib/theme";
 import { cn, formatBytes, formatDate } from "@/lib/utils";
@@ -63,6 +63,10 @@ const collectionLabelOptions = [
   { id: "slate", name: "Slate" },
   { id: "blue", name: "Blue" },
   { id: "rose", name: "Rose" },
+  { id: "violet", name: "Violet" },
+  { id: "cyan", name: "Cyan" },
+  { id: "orange", name: "Orange" },
+  { id: "indigo", name: "Indigo" },
 ] as const;
 
 type CollectionColor = (typeof collectionLabelOptions)[number]["id"];
@@ -74,7 +78,7 @@ const filterOptions: Array<{ id: NoteFilter; label: string }> = [
   { id: "files", label: "Files" },
 ];
 
-const emptyWorkspace: Workspace = { version: 1, notes: [], folders: [], groups: [] };
+const emptyWorkspace: Workspace = { version: 2, notes: [], folders: [], groups: [] };
 const sidebarCollapsedStorageKey = "notes-sidebar-collapsed";
 const sidebarCollapsedChangeEvent = "notes-sidebar-collapsed-change";
 
@@ -123,9 +127,42 @@ function isEditableTarget(target: EventTarget | null): boolean {
   return element?.isContentEditable || element?.matches("input, textarea, select") || false;
 }
 
+function resizeNoteContent(textarea: HTMLTextAreaElement | null) {
+  if (!textarea) return;
+  textarea.style.height = "auto";
+  textarea.style.height = `${textarea.scrollHeight}px`;
+}
+
 function CollectionShape({ kind, color }: { kind: CollectionKind; color: string }) {
   const Shape = kind === "folder" ? FolderIcon : Hexagon;
   return <Shape className={cn("collection-shape", kind === "folder" ? "folder-shape" : "group-shape", colorClass(color))} aria-hidden="true" />;
+}
+
+function CollectionColorPicker({
+  kind,
+  collection,
+  onChange,
+}: {
+  kind: CollectionKind;
+  collection: NoteFolder | Group;
+  onChange: (color: CollectionColor) => void;
+}) {
+  const label = collectionKindLabel(kind);
+  return <DropdownMenu>
+    <DropdownMenuTrigger asChild>
+      <Button type="button" variant="ghost" size="icon-sm" className="collection-color-trigger" aria-label={`Choose ${label} color for ${collection.name}`}>
+        <CollectionShape kind={kind} color={collection.color} />
+      </Button>
+    </DropdownMenuTrigger>
+    <DropdownMenuContent align="start" side="right" className="collection-color-menu" aria-label={`Choose ${label} color`}>
+      <div className="collection-color-grid" role="grid" aria-label={`${label} colors`}>
+        {collectionLabelOptions.map((option) => <DropdownMenuItem key={option.id} className={cn("collection-color-option", option.id)} data-active={colorClass(collection.color) === option.id} aria-label={`${option.name} color`} onSelect={() => onChange(option.id)}>
+          <span className={cn("collection-color-dot", option.id)} aria-hidden="true" />
+          <span className="sr-only">{option.name}</span>
+        </DropdownMenuItem>)}
+      </div>
+    </DropdownMenuContent>
+  </DropdownMenu>;
 }
 
 export function NotesApp() {
@@ -141,17 +178,15 @@ export function NotesApp() {
   const [linkUrl, setLinkUrl] = useState("");
   const [newFolderName, setNewFolderName] = useState("");
   const [newGroupName, setNewGroupName] = useState("");
-  const [newFolderColor, setNewFolderColor] = useState<CollectionColor>("green");
-  const [newGroupColor, setNewGroupColor] = useState<CollectionColor>("green");
   const [creatingFolder, setCreatingFolder] = useState(false);
+  const [creatingFolderGroupId, setCreatingFolderGroupId] = useState<string | null>(null);
   const [creatingGroup, setCreatingGroup] = useState(false);
+  const folderCreationCommittedRef = useRef(false);
+  const groupCreationCommittedRef = useRef(false);
   const sidebarCollapsed = useSyncExternalStore(subscribeToSidebarCollapsed, getSidebarCollapsedSnapshot, getSidebarCollapsedServerSnapshot);
   const [editingCollection, setEditingCollection] = useState<CollectionTarget | null>(null);
   const [editingCollectionSurface, setEditingCollectionSurface] = useState<CollectionRenameSurface | null>(null);
   const [collectionNameDraft, setCollectionNameDraft] = useState("");
-  const [collectionEditor, setCollectionEditor] = useState<CollectionTarget | null>(null);
-  const [collectionEditorName, setCollectionEditorName] = useState("");
-  const [collectionEditorColor, setCollectionEditorColor] = useState<CollectionColor>("green");
   const [deleteTarget, setDeleteTarget] = useState<CollectionTarget | null>(null);
   const [loading, setLoading] = useState(true);
   const [authRequired, setAuthRequired] = useState(false);
@@ -163,6 +198,7 @@ export function NotesApp() {
   const [hydrated, setHydrated] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const titleRef = useRef<HTMLInputElement>(null);
+  const contentEditorRef = useRef<HTMLTextAreaElement>(null);
   const collectionRenameRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -225,7 +261,7 @@ export function NotesApp() {
     }
     createNewNote(
       activeCollectionTarget.kind === "folder" ? activeCollectionTarget.id : null,
-      activeCollectionTarget.kind === "group" ? activeCollectionTarget.id : null,
+      activeCollectionTarget.kind === "folder" ? activeFolder?.groupId ?? null : activeCollectionTarget.id,
     );
   }
 
@@ -245,6 +281,10 @@ export function NotesApp() {
     media.addEventListener("change", updateSystemTheme);
     return () => media.removeEventListener("change", updateSystemTheme);
   }, [themePreference]);
+
+  useLayoutEffect(() => {
+    resizeNoteContent(contentEditorRef.current);
+  }, [selectedNote?.id, selectedNote?.content]);
 
   useEffect(() => {
     let cancelled = false;
@@ -360,12 +400,25 @@ export function NotesApp() {
 
   function moveSelected(folderId: string | null) {
     if (!selectedNoteId) return;
-    setWorkspace((current) => ({ ...current, notes: moveNote(current.notes, selectedNoteId, folderId) }));
+    setWorkspace((current) => {
+      const folder = folderId === null ? undefined : current.folders.find((candidate) => candidate.id === folderId);
+      return { ...current, notes: updateNote(current.notes, selectedNoteId, { folderId, groupId: folder?.groupId ?? null }) };
+    });
   }
 
   function moveSelectedToGroup(groupId: string | null) {
     if (!selectedNoteId) return;
-    updateSelectedNote({ groupId });
+    setWorkspace((current) => {
+      const note = current.notes.find((candidate) => candidate.id === selectedNoteId);
+      if (!note) return current;
+      const folder = note.folderId === null ? undefined : current.folders.find((candidate) => candidate.id === note.folderId);
+      const folderId = groupId !== null && folder?.groupId === groupId
+        ? folder.id
+        : groupId === null && folder?.groupId === null
+          ? folder.id
+          : null;
+      return { ...current, notes: updateNote(current.notes, selectedNoteId, { folderId, groupId }) };
+    });
   }
 
   function deleteSelectedNote() {
@@ -380,10 +433,6 @@ export function NotesApp() {
     return target.kind === "folder"
       ? workspace.folders.find((folder) => folder.id === target.id)
       : workspace.groups.find((group) => group.id === target.id);
-  }
-
-  function normalizeCollectionColor(color: string): CollectionColor {
-    return collectionLabelOptions.some((option) => option.id === color) ? color as CollectionColor : "slate";
   }
 
   function beginCollectionRename(target: CollectionTarget, surface: CollectionRenameSurface) {
@@ -425,33 +474,21 @@ export function NotesApp() {
     }
   }
 
-  function openCollectionEditor(target: CollectionTarget) {
-    const collection = findCollection(target);
-    if (!collection) return;
-    setEditingCollection(null);
-    setEditingCollectionSurface(null);
-    setCollectionEditor(target);
-    setCollectionEditorName(collection.name);
-    setCollectionEditorColor(normalizeCollectionColor(collection.color));
+  function updateCollectionColor(target: CollectionTarget, color: CollectionColor) {
+    setWorkspace((current) => target.kind === "folder"
+      ? { ...current, folders: current.folders.map((folder) => folder.id === target.id ? { ...folder, color } : folder) }
+      : { ...current, groups: current.groups.map((group) => group.id === target.id ? { ...group, color } : group) });
   }
 
-  function saveCollectionEditor(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!collectionEditor) return;
-    const name = collectionEditorName.trim();
-    if (!name) return;
-    const target = collectionEditor;
-    setWorkspace((current) => target.kind === "folder"
-      ? { ...current, folders: current.folders.map((folder) => folder.id === target.id ? { ...folder, name, color: collectionEditorColor } : folder) }
-      : { ...current, groups: current.groups.map((group) => group.id === target.id ? { ...group, name, color: collectionEditorColor } : group) });
-    setCollectionEditor(null);
+  function nextCollectionColor(current: Workspace): CollectionColor {
+    const usedColors = new Set([...current.folders, ...current.groups].map((collection) => colorClass(collection.color)));
+    return collectionLabelOptions.find((option) => !usedColors.has(option.id))?.id ?? collectionLabelOptions[(current.folders.length + current.groups.length) % collectionLabelOptions.length].id;
   }
 
   function requestCollectionDelete(target: CollectionTarget) {
     if (!findCollection(target)) return;
     setEditingCollection(null);
     setEditingCollectionSurface(null);
-    setCollectionEditor(null);
     setDeleteTarget(target);
   }
 
@@ -469,6 +506,7 @@ export function NotesApp() {
       : {
           ...current,
           groups: current.groups.filter((group) => group.id !== target.id),
+          folders: current.folders.map((folder) => folder.groupId === target.id ? { ...folder, groupId: null } : folder),
           notes: current.notes.map((note) => note.groupId === target.id ? { ...note, groupId: null } : note),
         });
     if ((target.kind === "folder" && query.folderId === target.id) || (target.kind === "group" && query.groupId === target.id)) {
@@ -478,26 +516,49 @@ export function NotesApp() {
     setDeleteTarget(null);
   }
 
-  function createFolder(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  function startFolderCreation(groupId: string | null) {
+    saveSidebarCollapsedPreference(false);
+    setNewFolderName("");
+    folderCreationCommittedRef.current = false;
+    setCreatingFolderGroupId(groupId);
+    setCreatingFolder(true);
+  }
+
+  function commitNewFolder() {
+    if (folderCreationCommittedRef.current) return;
     const name = newFolderName.trim();
     if (!name) return;
-    const folder: NoteFolder = { id: createId("folder"), name, parentId: null, color: newFolderColor, position: workspace.folders.length };
-    setWorkspace((current) => ({ ...current, folders: [...current.folders, folder] }));
+    folderCreationCommittedRef.current = true;
+    setWorkspace((current) => ({
+      ...current,
+      folders: [...current.folders, { id: createId("folder"), name, parentId: null, groupId: creatingFolderGroupId, color: nextCollectionColor(current), position: current.folders.length }],
+    }));
     setNewFolderName("");
-    setNewFolderColor("green");
     setCreatingFolder(false);
+    setCreatingFolderGroupId(null);
+  }
+
+  function createFolder(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    commitNewFolder();
+  }
+
+  function commitNewGroup() {
+    if (groupCreationCommittedRef.current) return;
+    const name = newGroupName.trim();
+    if (!name) return;
+    groupCreationCommittedRef.current = true;
+    setWorkspace((current) => ({
+      ...current,
+      groups: [...current.groups, { id: createId("group"), name, color: nextCollectionColor(current), position: current.groups.length }],
+    }));
+    setNewGroupName("");
+    setCreatingGroup(false);
   }
 
   function createGroup(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const name = newGroupName.trim();
-    if (!name) return;
-    const group: Group = { id: createId("group"), name, color: newGroupColor, position: workspace.groups.length };
-    setWorkspace((current) => ({ ...current, groups: [...current.groups, group] }));
-    setNewGroupName("");
-    setNewGroupColor("green");
-    setCreatingGroup(false);
+    commitNewGroup();
   }
 
   function handleFolderDrop(event: React.DragEvent<HTMLButtonElement>, folderId: string | null) {
@@ -505,7 +566,19 @@ export function NotesApp() {
     event.stopPropagation();
     const noteId = event.dataTransfer.getData("text/plain") || draggingId;
     if (!noteId) return;
-    setWorkspace((current) => ({ ...current, notes: moveNote(current.notes, noteId, folderId) }));
+    setWorkspace((current) => {
+      const folder = folderId === null ? undefined : current.folders.find((candidate) => candidate.id === folderId);
+      return { ...current, notes: updateNote(current.notes, noteId, { folderId, groupId: folder?.groupId ?? null }) };
+    });
+    setDraggingId(null);
+  }
+
+  function handleGroupDrop(event: React.DragEvent<HTMLButtonElement>, groupId: string) {
+    event.preventDefault();
+    event.stopPropagation();
+    const noteId = event.dataTransfer.getData("text/plain") || draggingId;
+    if (!noteId) return;
+    setWorkspace((current) => ({ ...current, notes: updateNote(current.notes, noteId, { folderId: null, groupId }) }));
     setDraggingId(null);
   }
 
@@ -626,21 +699,38 @@ export function NotesApp() {
     return <button key={itemKey} type="button" className="nav-item" data-active={active} data-drop-target={onDrop ? "folder" : undefined} onClick={onClick} onDragOver={(event) => { if (!onDrop) return; event.preventDefault(); event.dataTransfer.dropEffect = "move"; }} onDrop={onDrop} aria-current={active ? "page" : undefined} title={label}>{icon}<span className="nav-item-label">{label}</span>{typeof count === "number" && <span className="count">{count}</span>}</button>;
   }
 
+  function folderCreationForm(groupId: string | null) {
+    return <form className="inline-create" key={`new-folder-${groupId ?? "global"}`} onSubmit={createFolder}>
+      <Input autoFocus value={newFolderName} onChange={(event) => setNewFolderName(event.target.value)} onBlur={commitNewFolder} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); commitNewFolder(); } if (event.key === "Escape") { setNewFolderName(""); setCreatingFolder(false); setCreatingFolderGroupId(null); } }} placeholder="Folder name" aria-label="New folder name" />
+    </form>;
+  }
+
+  function folderTree(groupId: string | null, parentId: string | null): React.ReactNode {
+    return workspace.folders
+      .filter((folder) => folder.groupId === groupId && folder.parentId === parentId)
+      .sort((left, right) => left.position - right.position)
+      .map((folder) => <div className="folder-tree-node" key={folder.id}>
+        {collectionRow("folder", folder, workspace.notes.filter((note) => note.folderId === folder.id && !note.archived).length, (event) => handleFolderDrop(event, folder.id))}
+        {folderTree(groupId, folder.id)}
+      </div>);
+  }
+
   function collectionRow(kind: CollectionKind, collection: NoteFolder | Group, count: number, onDrop?: (event: React.DragEvent<HTMLButtonElement>) => void) {
     const target: CollectionTarget = { kind, id: collection.id };
     const editing = editingCollectionSurface === "sidebar" && editingCollection?.kind === target.kind && editingCollection.id === target.id;
     const collectionLabel = collectionKindLabel(kind);
+    const folderGroupId = kind === "folder" ? (collection as NoteFolder).groupId : null;
+    const active = (kind === "folder" ? query.folderId : query.groupId) === collection.id;
     return <div className="collection-nav-row" key={collection.id} data-editing={editing}>
       {editing ? <form className="collection-rename-form" onSubmit={saveInlineCollectionRename}>
-        <Input ref={collectionRenameRef} value={collectionNameDraft} onChange={(event) => setCollectionNameDraft(event.target.value)} onBlur={commitInlineCollectionRename} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); setEditingCollection(null); setEditingCollectionSurface(null); } }} aria-label={`Rename ${collectionLabel}`} />
-        <Button type="submit" variant="ghost" size="icon-sm" aria-label={`Save ${collectionLabel} name`}><Check className="h-4 w-4" /></Button>
+        <Input ref={collectionRenameRef} value={collectionNameDraft} onChange={(event) => setCollectionNameDraft(event.target.value)} onBlur={commitInlineCollectionRename} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); commitInlineCollectionRename(); } if (event.key === "Escape") { event.preventDefault(); setEditingCollection(null); setEditingCollectionSurface(null); } }} aria-label={`Rename ${collectionLabel}`} />
       </form> : <>
-        <button type="button" className="nav-item collection-nav-item" data-active={(kind === "folder" ? query.folderId : query.groupId) === collection.id} data-drop-target={onDrop ? "folder" : undefined} onClick={() => selectNoteView({ search: "", filter: "all", folderId: kind === "folder" ? collection.id : null, groupId: kind === "group" ? collection.id : null })} onDoubleClick={() => beginCollectionRename(target, "sidebar")} onKeyDown={(event) => handleCollectionKeyDown(event, target, "sidebar")} onDragOver={(event) => { if (!onDrop) return; event.preventDefault(); event.dataTransfer.dropEffect = "move"; }} onDrop={onDrop} aria-current={(kind === "folder" ? query.folderId : query.groupId) === collection.id ? "page" : undefined} aria-keyshortcuts="F2 Delete" aria-label={`${collection.name}, ${collectionLabel}. Double-click or press F2 to rename`} title={`${collection.name} · ${collectionLabel}`}>
-          <CollectionShape kind={kind} color={collection.color} /><span className="nav-item-label">{collection.name}</span><span className="count">{count}</span>
+        <CollectionColorPicker kind={kind} collection={collection} onChange={(color) => updateCollectionColor(target, color)} />
+        <button type="button" className="nav-item collection-nav-item" data-active={active} data-drop-target={onDrop ? "folder" : undefined} onClick={() => selectNoteView({ search: "", filter: "all", folderId: kind === "folder" ? collection.id : null, groupId: kind === "folder" ? folderGroupId : collection.id })} onDoubleClick={() => beginCollectionRename(target, "sidebar")} onKeyDown={(event) => handleCollectionKeyDown(event, target, "sidebar")} onDragOver={(event) => { if (!onDrop) return; event.preventDefault(); event.dataTransfer.dropEffect = "move"; }} onDrop={onDrop} aria-current={active ? "page" : undefined} aria-keyshortcuts="F2 Delete" aria-label={`${collection.name}, ${collectionLabel}. Double-click or press F2 to rename`} title={`${collection.name} · ${collectionLabel}`}>
+          <span className="nav-item-label collection-name">{collection.name}</span><span className="count">{count}</span>
         </button>
         <div className="collection-actions">
-          <Tooltip><TooltipTrigger asChild><Button type="button" variant="ghost" size="icon-sm" className="collection-action" aria-label={`Edit ${collectionLabel} label`} onClick={() => openCollectionEditor(target)}><Pencil className="h-3.5 w-3.5" /></Button></TooltipTrigger><TooltipContent>Edit {collectionLabel}</TooltipContent></Tooltip>
-          <Tooltip><TooltipTrigger asChild><Button type="button" variant="ghost" size="icon-sm" className="collection-action collection-delete-action" aria-label={`Delete ${collectionLabel} ${collection.name}`} onClick={() => requestCollectionDelete(target)}><Trash2 className="h-3.5 w-3.5" /></Button></TooltipTrigger><TooltipContent>Delete {collectionLabel}</TooltipContent></Tooltip>
+          {kind === "group" && <Tooltip><TooltipTrigger asChild><Button type="button" variant="ghost" size="icon-sm" className="collection-action" aria-label={`Add folder to group ${collection.name}`} onClick={() => startFolderCreation(collection.id)}><FolderPlus className="h-3.5 w-3.5" /></Button></TooltipTrigger><TooltipContent>Add folder</TooltipContent></Tooltip>}
         </div>
       </>}
     </div>;
@@ -678,19 +768,25 @@ export function NotesApp() {
               </div>
 
               <div className="sidebar-section">
-                <div className="section-label"><span>Folders</span><button type="button" aria-label="Add folder" onClick={() => { saveSidebarCollapsedPreference(false); setCreatingFolder(true); }}><FolderPlus className="h-3.5 w-3.5" /></button></div>
+                <div className="section-label"><span>Folders</span><button type="button" aria-label="Add folder" onClick={() => startFolderCreation(null)}><FolderPlus className="h-3.5 w-3.5" /></button></div>
                 <div className="folder-list">
-                  {workspace.folders.map((folder) => collectionRow("folder", folder, workspace.notes.filter((note) => note.folderId === folder.id && !note.archived).length, (event) => handleFolderDrop(event, folder.id)))}
+                  {folderTree(null, null)}
                 </div>
-                {creatingFolder && <form className="inline-create" onSubmit={createFolder}><Input autoFocus value={newFolderName} onChange={(event) => setNewFolderName(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") setCreatingFolder(false); }} placeholder="Folder name" aria-label="New folder name" /><select className="collection-label-select" aria-label="Folder label" value={newFolderColor} onChange={(event) => setNewFolderColor(normalizeCollectionColor(event.target.value))}>{collectionLabelOptions.map((option) => <option value={option.id} key={option.id}>{option.name}</option>)}</select><Button type="submit" size="icon-sm" aria-label="Create folder"><Check className="h-4 w-4" /></Button></form>}
+                {creatingFolder && creatingFolderGroupId === null && folderCreationForm(null)}
               </div>
 
               <div className="sidebar-section">
-                <div className="section-label"><span>Groups</span><button type="button" aria-label="Add group" onClick={() => { saveSidebarCollapsedPreference(false); setCreatingGroup(true); }}><Plus className="h-3.5 w-3.5" /></button></div>
+                <div className="section-label"><span>Groups</span><button type="button" aria-label="Add group" onClick={() => { saveSidebarCollapsedPreference(false); setNewGroupName(""); groupCreationCommittedRef.current = false; setCreatingGroup(true); }}><Plus className="h-3.5 w-3.5" /></button></div>
                 <div className="group-list">
-                  {workspace.groups.map((group) => collectionRow("group", group, workspace.notes.filter((note) => note.groupId === group.id && !note.archived).length))}
+                  {workspace.groups.map((group) => <div className="group-hub" key={group.id}>
+                    {collectionRow("group", group, workspace.notes.filter((note) => note.groupId === group.id && !note.archived).length, (event) => handleGroupDrop(event, group.id))}
+                    <div className="group-folder-list">
+                      {folderTree(group.id, null)}
+                      {creatingFolder && creatingFolderGroupId === group.id && folderCreationForm(group.id)}
+                    </div>
+                  </div>)}
                 </div>
-                {creatingGroup && <form className="inline-create" onSubmit={createGroup}><Input autoFocus value={newGroupName} onChange={(event) => setNewGroupName(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") setCreatingGroup(false); }} placeholder="Group name" aria-label="New group name" /><select className="collection-label-select" aria-label="Group label" value={newGroupColor} onChange={(event) => setNewGroupColor(normalizeCollectionColor(event.target.value))}>{collectionLabelOptions.map((option) => <option value={option.id} key={option.id}>{option.name}</option>)}</select><Button type="submit" size="icon-sm" aria-label="Create group"><Check className="h-4 w-4" /></Button></form>}
+                {creatingGroup && <form className="inline-create" onSubmit={createGroup}><Input autoFocus value={newGroupName} onChange={(event) => setNewGroupName(event.target.value)} onBlur={commitNewGroup} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); commitNewGroup(); } if (event.key === "Escape") { setNewGroupName(""); setCreatingGroup(false); } }} placeholder="Group name" aria-label="New group name" /></form>}
               </div>
 
               <div className="sidebar-section">
@@ -709,8 +805,20 @@ export function NotesApp() {
                 <div className="list-title-actions">
                   {activeCollection && activeCollectionTarget ? (editingCollectionSurface === "title" && editingCollection?.kind === activeCollectionTarget.kind && editingCollection.id === activeCollectionTarget.id ? <form className="list-title-form" onSubmit={saveInlineCollectionRename}><Input ref={collectionRenameRef} autoFocus value={collectionNameDraft} onChange={(event) => setCollectionNameDraft(event.target.value)} onBlur={commitInlineCollectionRename} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); setEditingCollection(null); setEditingCollectionSurface(null); } }} aria-label={`Rename ${collectionKindLabel(activeCollectionTarget.kind)}`} /></form> : <button type="button" className="list-title-button" onDoubleClick={() => beginCollectionRename(activeCollectionTarget, "title")} onKeyDown={(event) => handleCollectionKeyDown(event, activeCollectionTarget, "title")} aria-keyshortcuts="F2 Delete" aria-label={`${activeCollection.name}, ${collectionKindLabel(activeCollectionTarget.kind)}. Double-click or press F2 to rename`}><CollectionShape kind={activeCollectionTarget.kind} color={activeCollection.color} /><span>{activeCollection.name}</span></button>) : <h1>{listTitle}</h1>}
                   {activeCollection && <Tooltip><TooltipTrigger asChild><Button type="button" variant="ghost" size="icon-sm" className="list-title-add" aria-label={`Create note in ${activeCollection.name}`} onClick={createNoteInActiveCollection}><Plus className="h-4 w-4" /></Button></TooltipTrigger><TooltipContent>New note in {activeCollection.name}</TooltipContent></Tooltip>}
+                  {activeCollection && activeCollectionTarget && <>
+                    <Tooltip><TooltipTrigger asChild><Button type="button" variant="ghost" size="icon-sm" className="list-title-delete desktop-only" aria-label={`Delete ${collectionKindLabel(activeCollectionTarget.kind)} ${activeCollection.name}`} onClick={() => requestCollectionDelete(activeCollectionTarget)}><Trash2 className="h-4 w-4" /></Button></TooltipTrigger><TooltipContent>Delete {collectionKindLabel(activeCollectionTarget.kind)}</TooltipContent></Tooltip>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button type="button" variant="ghost" size="icon-sm" className="list-title-overflow mobile-only" aria-label={`More actions for ${activeCollection.name}`}><MoreVertical className="h-4 w-4" /></Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onSelect={() => beginCollectionRename(activeCollectionTarget, "title")}>Rename {collectionKindLabel(activeCollectionTarget.kind)} {activeCollection.name}</DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => requestCollectionDelete(activeCollectionTarget)}>Delete {collectionKindLabel(activeCollectionTarget.kind)} {activeCollection.name}</DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </>}
                 </div>
-                <span>{filteredNotes.length}</span>
               </div>
               <div className="relative">
                 <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -751,7 +859,7 @@ export function NotesApp() {
                   <select className="folder-select" aria-label="Move note to folder" value={selectedNote.folderId ?? "inbox"} onChange={(event) => moveSelected(event.target.value === "inbox" ? null : event.target.value)}><option value="inbox">Inbox</option>{workspace.folders.map((folder) => <option value={folder.id} key={folder.id}>{folder.name}</option>)}</select>
                   <select className="folder-select" aria-label="Assign note to group" value={selectedNote.groupId ?? "none"} onChange={(event) => moveSelectedToGroup(event.target.value === "none" ? null : event.target.value)}><option value="none">No group</option>{workspace.groups.map((group) => <option value={group.id} key={group.id}>{group.name}</option>)}</select>
                 </div>
-                <Textarea value={selectedNote.content} onChange={(event) => updateSelectedNote({ content: event.target.value })} onBlur={finalizeSelectedNote} placeholder="Start writing…" aria-label="Note content" className="content-editor" />
+                <Textarea ref={contentEditorRef} value={selectedNote.content} onChange={(event) => updateSelectedNote({ content: event.target.value })} onInput={(event) => resizeNoteContent(event.currentTarget)} onBlur={finalizeSelectedNote} placeholder="Start writing…" aria-label="Note content" className="content-editor" style={{ overflowY: "hidden" }} />
 
                 <section className="editor-section" aria-labelledby="checklist-heading">
                   <div className="editor-section-heading"><span id="checklist-heading"><ListChecks className="mr-1 inline h-3.5 w-3.5" />Checklist</span><Button variant="ghost" size="sm" onClick={addChecklistItem}><Plus className="h-3.5 w-3.5" />Add item</Button></div>
@@ -790,17 +898,6 @@ export function NotesApp() {
         <DialogContent>
           <DialogHeader><DialogTitle>Add a link</DialogTitle><DialogDescription>Keep a useful reference beside the note that explains why it matters.</DialogDescription></DialogHeader>
           <form className="dialog-form" onSubmit={addLink}><div className="dialog-field"><label htmlFor="link-name">Name</label><Input id="link-name" value={linkName} onChange={(event) => setLinkName(event.target.value)} placeholder="Optional label" /></div><div className="dialog-field"><label htmlFor="link-url">URL</label><Input id="link-url" type="url" required value={linkUrl} onChange={(event) => setLinkUrl(event.target.value)} placeholder="https://" /></div><DialogFooter><Button type="button" variant="outline" onClick={() => setLinkDialogOpen(false)}>Cancel</Button><Button type="submit"><Link2 className="h-4 w-4" />Add link</Button></DialogFooter></form>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={Boolean(collectionEditor)} onOpenChange={(open) => { if (!open) setCollectionEditor(null); }}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Edit {collectionEditor ? collectionTargetLabel(collectionEditor).toLocaleLowerCase() : "collection"}</DialogTitle><DialogDescription>Rename this collection or choose its visual label.</DialogDescription></DialogHeader>
-          <form className="dialog-form" onSubmit={saveCollectionEditor}>
-            <div className="dialog-field"><label htmlFor="collection-editor-name">Name</label><Input id="collection-editor-name" autoFocus value={collectionEditorName} onChange={(event) => setCollectionEditorName(event.target.value)} /></div>
-            <fieldset className="collection-label-fieldset"><legend>Label</legend><div className="collection-label-options" role="radiogroup" aria-label="Collection label">{collectionLabelOptions.map((option) => <button type="button" role="radio" className="collection-label-option" data-color={option.id} data-active={collectionEditorColor === option.id} aria-label={`${option.name} label`} aria-checked={collectionEditorColor === option.id} key={option.id} onClick={() => setCollectionEditorColor(option.id)}><span className={cn("collection-label-swatch", option.id)} aria-hidden="true" /><span>{option.name}</span></button>)}</div></fieldset>
-            <DialogFooter><Button type="button" variant="outline" onClick={() => setCollectionEditor(null)}>Cancel</Button><Button type="submit"><Check className="h-4 w-4" />Save changes</Button></DialogFooter>
-          </form>
         </DialogContent>
       </Dialog>
 

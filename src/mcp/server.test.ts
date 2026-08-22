@@ -65,4 +65,23 @@ describe("MCP server", () => {
     await client.close();
     await server.close();
   });
+
+  it("exposes group hubs and group-owned folders through the protocol", async () => {
+    const { client, server } = await connectServer();
+    const groupResult = await client.callTool({ name: "create_group", arguments: { name: "Product" } });
+    const group = JSON.parse(String(groupResult.content[0]?.type === "text" ? groupResult.content[0].text : "{}")) as { id: string };
+    const folderResult = await client.callTool({ name: "create_folder", arguments: { name: "Research", group_id: group.id } });
+    const folder = JSON.parse(String(folderResult.content[0]?.type === "text" ? folderResult.content[0].text : "{}")) as { id: string; groupId: string };
+    const noteResult = await client.callTool({ name: "create_note", arguments: { title: "Direct", group_id: group.id } });
+    const deleteResult = await client.callTool({ name: "delete_group", arguments: { group_id: group.id } });
+
+    expect(groupResult.isError).not.toBe(true);
+    expect(folderResult.isError).not.toBe(true);
+    expect(folder.groupId).toBe(group.id);
+    expect(noteResult.isError).not.toBe(true);
+    expect(JSON.stringify(deleteResult)).toContain("detachedFolderCount");
+
+    await client.close();
+    await server.close();
+  });
 });

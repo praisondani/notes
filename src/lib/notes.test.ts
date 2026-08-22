@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createNote, filterNotes, firstSentence, isNoteEmpty, moveNote, noteMatchesSearch, reorderChecklist, reorderNotes, toggleChecklist, togglePinned, updateNote, withDerivedTitle } from "@/lib/notes";
+import { createNote, ensureWorkspace, filterNotes, firstSentence, isNoteEmpty, moveNote, noteMatchesSearch, reorderChecklist, reorderNotes, toggleChecklist, togglePinned, updateNote, withDerivedTitle } from "@/lib/notes";
 import type { ChecklistItem, Note } from "@/lib/types";
 
 const now = new Date("2026-08-20T12:00:00.000Z");
@@ -80,5 +80,29 @@ describe("note domain", () => {
     ];
     expect(reorderChecklist(checklist, "three", "one")).toEqual([checklist[2], checklist[0], checklist[1]]);
     expect(reorderChecklist(checklist, "missing", "one")).toEqual(checklist);
+  });
+
+  it("migrates legacy folders into group-owned hubs when ownership is unambiguous", () => {
+    const migrated = ensureWorkspace({
+      version: 1,
+      groups: [
+        { id: "group-work", name: "Work", color: "green", position: 0 },
+        { id: "group-personal", name: "Personal", color: "amber", position: 1 },
+      ],
+      folders: [
+        { id: "folder-work", name: "Projects", parentId: null, color: "green", position: 0 },
+        { id: "folder-mixed", name: "Mixed", parentId: null, color: "slate", position: 1 },
+      ],
+      notes: [
+        note("work-note", "Work note", { folderId: "folder-work", groupId: "group-work" }),
+        note("mixed-work", "Mixed work", { folderId: "folder-mixed", groupId: "group-work" }),
+        note("mixed-personal", "Mixed personal", { folderId: "folder-mixed", groupId: "group-personal" }),
+      ],
+    });
+
+    expect(migrated.version).toBe(2);
+    expect(migrated.folders.find((folder) => folder.id === "folder-work")?.groupId).toBe("group-work");
+    expect(migrated.folders.find((folder) => folder.id === "folder-mixed")?.groupId).toBeNull();
+    expect(migrated.notes.find((note) => note.id === "work-note")?.groupId).toBe("group-work");
   });
 });

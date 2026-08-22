@@ -89,7 +89,7 @@ Use shadcn/ui conventions and Radix primitives where they help: Button, Input, T
 - `⌘/Ctrl Shift P`: toggle pinned state.
 - `Escape`: close overlays, cancel rename, or return focus to the editor.
 - Arrow keys move through navigation and note lists; Enter activates; Space toggles selection where applicable.
-- Drag and drop supports moving notes into folders and reordering notes within a group. All drag actions have keyboard equivalents.
+- Drag and drop supports moving notes into folders, moving notes to a group's direct-note root, and reordering the note list. All drag actions have keyboard equivalents.
 
 ## Motion
 

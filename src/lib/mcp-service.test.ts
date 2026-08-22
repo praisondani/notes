@@ -11,6 +11,7 @@ import {
   deleteGroupRecord,
   deleteNoteRecord,
   getNoteRecord,
+  getWorkspaceSnapshot,
   listNotes,
   ragQuery,
   searchNotes,
@@ -46,8 +47,8 @@ describe("MCP note service", () => {
   });
 
   it("validates references and updates note fields through the public service", async () => {
-    const folder = await createFolderRecord({ name: "Research" });
     const group = await createGroupRecord({ name: "Work" });
+    const folder = await createFolderRecord({ name: "Research", groupId: group.id });
     const note = await createNoteRecord({
       title: "Research plan",
       content: "Collect the evidence before making a decision.",
@@ -101,5 +102,23 @@ describe("MCP note service", () => {
 
     expect(deleted.id).toBe(remove.id);
     expect(notes.notes.map((note) => note.id)).toEqual([keep.id]);
+  });
+
+  it("models groups as hubs that can own folders and direct notes", async () => {
+    const work = await createGroupRecord({ name: "Work" });
+    const personal = await createGroupRecord({ name: "Personal" });
+    const projects = await createFolderRecord({ name: "Projects", groupId: work.id });
+
+    await expect(createFolderRecord({ name: "Wrong parent", parentId: projects.id, groupId: personal.id })).rejects.toThrow("same group");
+    const directNote = await createNoteRecord({ title: "Direct note", groupId: work.id });
+    const folderNote = await createNoteRecord({ title: "Folder note", folderId: projects.id, groupId: work.id });
+
+    const deleted = await deleteGroupRecord(work.id);
+    const snapshot = await getWorkspaceSnapshot();
+    expect(deleted.detachedFolderCount).toBe(1);
+    expect(snapshot.folders.find((folder) => folder.id === projects.id)?.groupId).toBeNull();
+    expect(snapshot.notes.find((note) => note.id === directNote.id)?.groupId).toBeNull();
+    expect(snapshot.notes.find((note) => note.id === folderNote.id)?.folderId).toBe(projects.id);
+    expect(snapshot.notes.find((note) => note.id === folderNote.id)?.groupId).toBeNull();
   });
 });

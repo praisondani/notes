@@ -229,6 +229,10 @@ export function NotesApp() {
     );
   }
 
+  function toggleSidebar() {
+    saveSidebarCollapsedPreference(!sidebarCollapsed);
+  }
+
   useEffect(() => {
     applyTheme(themePreference);
     const media = typeof window.matchMedia === "function" ? window.matchMedia("(prefers-color-scheme: dark)") : null;
@@ -330,10 +334,6 @@ export function NotesApp() {
     const nextPreference: ThemePreference = nextDark ? "dark" : "light";
     setThemePreferenceState(nextPreference);
     setDarkMode(saveThemePreference(nextPreference));
-  }
-
-  function toggleSidebar() {
-    saveSidebarCollapsedPreference(!sidebarCollapsed);
   }
 
   function updateSelectedNote(patch: Partial<Note>) {

@@ -567,6 +567,19 @@ button:disabled {
   gap: 8px;
 }
 
+.list-title-actions {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 4px;
+}
+
+.list-title-actions > h1 {
+  min-width: 0;
+  flex: 1;
+}
+
 .list-title-row h1 {
   font-size: 18px;
   font-weight: 650;
@@ -606,6 +619,16 @@ button:disabled {
 .list-title-button:focus-visible {
   background: var(--muted);
   outline: none;
+}
+
+.list-title-add {
+  flex: none;
+  color: var(--muted-foreground);
+}
+
+.list-title-add:hover,
+.list-title-add:focus-visible {
+  color: var(--foreground);
 }
 
 .list-title-button > span:last-child {

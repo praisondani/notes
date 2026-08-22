@@ -1,7 +1,7 @@
 "use client";
 /* eslint-disable @next/next/no-img-element */
 
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ChangeEvent, type FormEvent } from "react";
 import Link from "next/link";
 import {
   Archive,
@@ -75,6 +75,32 @@ const filterOptions: Array<{ id: NoteFilter; label: string }> = [
 ];
 
 const emptyWorkspace: Workspace = { version: 1, notes: [], folders: [], groups: [] };
+const sidebarCollapsedStorageKey = "notes-sidebar-collapsed";
+const sidebarCollapsedChangeEvent = "notes-sidebar-collapsed-change";
+
+function getSidebarCollapsedSnapshot(): boolean {
+  if (typeof window === "undefined") return false;
+  return window.localStorage.getItem(sidebarCollapsedStorageKey) === "true";
+}
+
+function getSidebarCollapsedServerSnapshot(): boolean {
+  return false;
+}
+
+function subscribeToSidebarCollapsed(onStoreChange: () => void): () => void {
+  if (typeof window === "undefined") return () => {};
+  window.addEventListener("storage", onStoreChange);
+  window.addEventListener(sidebarCollapsedChangeEvent, onStoreChange);
+  return () => {
+    window.removeEventListener("storage", onStoreChange);
+    window.removeEventListener(sidebarCollapsedChangeEvent, onStoreChange);
+  };
+}
+
+function saveSidebarCollapsedPreference(value: boolean) {
+  window.localStorage.setItem(sidebarCollapsedStorageKey, String(value));
+  window.dispatchEvent(new Event(sidebarCollapsedChangeEvent));
+}
 
 function noteCount(notes: Note[], filter: NoteFilter): number {
   return filterNotes(notes, { search: "", filter, folderId: null, groupId: null }).length;
@@ -119,7 +145,7 @@ export function NotesApp() {
   const [newGroupColor, setNewGroupColor] = useState<CollectionColor>("green");
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [creatingGroup, setCreatingGroup] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const sidebarCollapsed = useSyncExternalStore(subscribeToSidebarCollapsed, getSidebarCollapsedSnapshot, getSidebarCollapsedServerSnapshot);
   const [editingCollection, setEditingCollection] = useState<CollectionTarget | null>(null);
   const [editingCollectionSurface, setEditingCollectionSurface] = useState<CollectionRenameSurface | null>(null);
   const [collectionNameDraft, setCollectionNameDraft] = useState("");
@@ -182,14 +208,25 @@ export function NotesApp() {
     });
   }
 
-  function createNewNote() {
+  function createNewNote(folderId: string | null = null, groupId: string | null = null) {
     leaveSelectedNote(null);
     const note = createNote(new Date());
-    setWorkspace((current) => ({ ...current, notes: [{ ...note, position: 0 }, ...current.notes.map((item, index) => ({ ...item, position: index + 1 }))] }));
+    setWorkspace((current) => ({ ...current, notes: [{ ...note, folderId, groupId, position: 0 }, ...current.notes.map((item, index) => ({ ...item, position: index + 1 }))] }));
     setSelectedNoteId(note.id);
-    setQuery({ search: "", filter: "all", folderId: null, groupId: null });
+    setQuery({ search: "", filter: "all", folderId, groupId });
     setMobilePane("editor");
     window.setTimeout(() => titleRef.current?.focus(), 0);
+  }
+
+  function createNoteInActiveCollection() {
+    if (!activeCollectionTarget) {
+      createNewNote();
+      return;
+    }
+    createNewNote(
+      activeCollectionTarget.kind === "folder" ? activeCollectionTarget.id : null,
+      activeCollectionTarget.kind === "group" ? activeCollectionTarget.id : null,
+    );
   }
 
   useEffect(() => {
@@ -204,10 +241,6 @@ export function NotesApp() {
     media.addEventListener("change", updateSystemTheme);
     return () => media.removeEventListener("change", updateSystemTheme);
   }, [themePreference]);
-
-  useEffect(() => {
-    setSidebarCollapsed(window.localStorage.getItem("notes-sidebar-collapsed") === "true");
-  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -300,11 +333,7 @@ export function NotesApp() {
   }
 
   function toggleSidebar() {
-    setSidebarCollapsed((current) => {
-      const next = !current;
-      window.localStorage.setItem("notes-sidebar-collapsed", String(next));
-      return next;
-    });
+    saveSidebarCollapsedPreference(!sidebarCollapsed);
   }
 
   function updateSelectedNote(patch: Partial<Note>) {
@@ -649,7 +678,7 @@ export function NotesApp() {
               </div>
 
               <div className="sidebar-section">
-                <div className="section-label"><span>Folders</span><button type="button" aria-label="Add folder" onClick={() => { setSidebarCollapsed(false); setCreatingFolder(true); }}><FolderPlus className="h-3.5 w-3.5" /></button></div>
+                <div className="section-label"><span>Folders</span><button type="button" aria-label="Add folder" onClick={() => { saveSidebarCollapsedPreference(false); setCreatingFolder(true); }}><FolderPlus className="h-3.5 w-3.5" /></button></div>
                 <div className="folder-list">
                   {workspace.folders.map((folder) => collectionRow("folder", folder, workspace.notes.filter((note) => note.folderId === folder.id && !note.archived).length, (event) => handleFolderDrop(event, folder.id)))}
                 </div>
@@ -657,7 +686,7 @@ export function NotesApp() {
               </div>
 
               <div className="sidebar-section">
-                <div className="section-label"><span>Groups</span><button type="button" aria-label="Add group" onClick={() => { setSidebarCollapsed(false); setCreatingGroup(true); }}><Plus className="h-3.5 w-3.5" /></button></div>
+                <div className="section-label"><span>Groups</span><button type="button" aria-label="Add group" onClick={() => { saveSidebarCollapsedPreference(false); setCreatingGroup(true); }}><Plus className="h-3.5 w-3.5" /></button></div>
                 <div className="group-list">
                   {workspace.groups.map((group) => collectionRow("group", group, workspace.notes.filter((note) => note.groupId === group.id && !note.archived).length))}
                 </div>
@@ -677,7 +706,10 @@ export function NotesApp() {
           <section className="note-list" aria-label="Notes">
             <div className="note-list-header">
               <div className="list-title-row">
-                {activeCollection && activeCollectionTarget ? (editingCollectionSurface === "title" && editingCollection?.kind === activeCollectionTarget.kind && editingCollection.id === activeCollectionTarget.id ? <form className="list-title-form" onSubmit={saveInlineCollectionRename}><Input ref={collectionRenameRef} autoFocus value={collectionNameDraft} onChange={(event) => setCollectionNameDraft(event.target.value)} onBlur={commitInlineCollectionRename} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); setEditingCollection(null); setEditingCollectionSurface(null); } }} aria-label={`Rename ${collectionKindLabel(activeCollectionTarget.kind)}`} /></form> : <button type="button" className="list-title-button" onDoubleClick={() => beginCollectionRename(activeCollectionTarget, "title")} onKeyDown={(event) => handleCollectionKeyDown(event, activeCollectionTarget, "title")} aria-keyshortcuts="F2 Delete" aria-label={`${activeCollection.name}, ${collectionKindLabel(activeCollectionTarget.kind)}. Double-click or press F2 to rename`}><CollectionShape kind={activeCollectionTarget.kind} color={activeCollection.color} /><span>{activeCollection.name}</span></button>) : <h1>{listTitle}</h1>}
+                <div className="list-title-actions">
+                  {activeCollection && activeCollectionTarget ? (editingCollectionSurface === "title" && editingCollection?.kind === activeCollectionTarget.kind && editingCollection.id === activeCollectionTarget.id ? <form className="list-title-form" onSubmit={saveInlineCollectionRename}><Input ref={collectionRenameRef} autoFocus value={collectionNameDraft} onChange={(event) => setCollectionNameDraft(event.target.value)} onBlur={commitInlineCollectionRename} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); setEditingCollection(null); setEditingCollectionSurface(null); } }} aria-label={`Rename ${collectionKindLabel(activeCollectionTarget.kind)}`} /></form> : <button type="button" className="list-title-button" onDoubleClick={() => beginCollectionRename(activeCollectionTarget, "title")} onKeyDown={(event) => handleCollectionKeyDown(event, activeCollectionTarget, "title")} aria-keyshortcuts="F2 Delete" aria-label={`${activeCollection.name}, ${collectionKindLabel(activeCollectionTarget.kind)}. Double-click or press F2 to rename`}><CollectionShape kind={activeCollectionTarget.kind} color={activeCollection.color} /><span>{activeCollection.name}</span></button>) : <h1>{listTitle}</h1>}
+                  {activeCollection && <Tooltip><TooltipTrigger asChild><Button type="button" variant="ghost" size="icon-sm" className="list-title-add" aria-label={`Create note in ${activeCollection.name}`} onClick={createNoteInActiveCollection}><Plus className="h-4 w-4" /></Button></TooltipTrigger><TooltipContent>New note in {activeCollection.name}</TooltipContent></Tooltip>}
+                </div>
                 <span>{filteredNotes.length}</span>
               </div>
               <div className="relative">
@@ -692,7 +724,7 @@ export function NotesApp() {
             <ScrollArea className="note-scroll">
               <div className="note-list-items" role="listbox" aria-label="Note list" aria-activedescendant={selectedNoteId ?? undefined}>
                 {loading && <div className="empty-state"><div><strong>Loading notes</strong><p>Opening your local workspace.</p></div></div>}
-                {!loading && !filteredNotes.length && <div className="empty-state"><div><strong>No notes found</strong><p>Try another search or create a new note.</p><Button className="mt-4" size="sm" onClick={createNewNote}><Plus className="h-4 w-4" />New note</Button></div></div>}
+                {!loading && !filteredNotes.length && <div className="empty-state"><div><strong>No notes found</strong><p>Try another search or create a new note.</p><Button className="mt-4" size="sm" onClick={createNoteInActiveCollection}><Plus className="h-4 w-4" />New note</Button></div></div>}
                 {filteredNotes.map((note) => <button key={note.id} id={note.id} data-note-id={note.id} type="button" role="option" aria-selected={selectedNoteId === note.id} className="note-row" data-selected={selectedNoteId === note.id} data-dragging={draggingId === note.id} draggable onDragStart={(event) => { event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", note.id); setDraggingId(note.id); }} onDragEnd={() => setDraggingId(null)} onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; }} onDrop={(event) => handleNoteDrop(event, note.id)} onClick={() => selectNote(note.id)} onKeyDown={handleNoteKeyDown}>
                   <span className="note-row-title"><span>{note.title || "Untitled note"}</span>{note.pinned && <Pin className="h-3 w-3 shrink-0 text-primary" aria-label="Pinned" />}</span>
                   <span className="note-row-preview">{getNotePreview(note)}</span>

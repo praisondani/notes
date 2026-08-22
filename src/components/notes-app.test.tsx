@@ -95,6 +95,15 @@ describe("NotesApp keyboard parity", () => {
     expect(screen.getAllByRole("button", { name: /Client projects, folder/ })).toHaveLength(2);
   });
 
+  it("creates a new note inside the active folder from the list header", async () => {
+    render(<NotesApp />);
+    await screen.findByDisplayValue("A quieter place for your notes");
+    fireEvent.click(screen.getByRole("button", { name: /Projects, folder/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Create note in Projects" }));
+    expect(await screen.findByDisplayValue("Untitled note")).toBeInTheDocument();
+    expect(screen.getByLabelText("Move note to folder")).toHaveValue("folder-projects");
+  });
+
   it("deletes a folder and detaches its notes after confirmation", async () => {
     render(<NotesApp />);
     await screen.findByDisplayValue("A quieter place for your notes");

@@ -121,6 +121,16 @@ describe("NotesApp keyboard parity", () => {
     expect(screen.getByRole("button", { name: /Projects, folder/ }).querySelector("svg")).toHaveClass("blue");
   });
 
+  it("uses the entire editor column as one scroll surface", async () => {
+    render(<NotesApp />);
+    await screen.findByDisplayValue("A quieter place for your notes");
+    const editor = document.querySelector<HTMLElement>(".editor");
+    expect(editor).toBeInTheDocument();
+    expect(editor?.querySelector(".editor-scroll")).not.toBeInTheDocument();
+    expect(editor?.querySelector(":scope > .editor-header")).toBeInTheDocument();
+    expect(editor?.querySelector(":scope > .editor-content")).toBeInTheDocument();
+  });
+
   it("renders navigation lists without React key warnings", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     try {

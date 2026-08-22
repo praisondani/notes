@@ -749,12 +749,15 @@ button:disabled {
   min-height: 0;
   flex-direction: column;
   min-width: 0;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   background: var(--background);
 }
 
 .editor-header {
   display: flex;
+  flex: 0 0 auto;
   min-height: 56px;
   align-items: center;
   justify-content: space-between;
@@ -780,14 +783,8 @@ button:disabled {
   gap: 4px;
 }
 
-.editor-scroll {
-  height: auto;
-  min-height: 0;
-  flex: 1;
-  overscroll-behavior: contain;
-}
-
 .editor-content {
+  flex: 0 0 auto;
   width: min(100%, 840px);
   margin: 0 auto;
   padding: 52px 60px 100px;
@@ -1507,8 +1504,7 @@ html.theme-switching *::after {
     height: 100%;
   }
 
-  .note-scroll,
-  .editor-scroll {
+  .note-scroll {
     height: auto;
     flex: 1;
   }

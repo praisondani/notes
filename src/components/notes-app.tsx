@@ -712,8 +712,7 @@ export function NotesApp() {
                 <Button variant="ghost" size="icon-sm" aria-label="Open command palette" onClick={() => setPaletteOpen(true)}><CommandIcon className="h-4 w-4" /></Button>
               </div>
             </div>
-            <ScrollArea className="editor-scroll">
-              {selectedNote ? <div className="editor-content">
+            {selectedNote ? <div className="editor-content">
                 <Input ref={titleRef} value={selectedNote.title} onChange={(event) => updateSelectedNote({ title: event.target.value })} className="title-input" placeholder="Untitled note" aria-label="Note title" />
                 <div className="editor-subline">
                   <span>Updated {formatDate(selectedNote.updatedAt)}</span><span aria-hidden="true">·</span>
@@ -743,7 +742,6 @@ export function NotesApp() {
                   <div className="tag-row mt-2 flex-wrap gap-1.5">{selectedNote.tags.map((tag) => <Badge variant="secondary" key={tag}>#{tag}<button type="button" className="ml-1" aria-label={`Remove tag ${tag}`} onClick={() => removeTag(tag)}><X className="h-3 w-3" /></button></Badge>)}<Input value={tagValue} onChange={(event) => setTagValue(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); setTagDraftValue(tagValue); } }} placeholder="Add tag" aria-label="Add tag" className="h-7 w-28 border-0 bg-transparent px-1 text-xs shadow-none focus-visible:ring-0" /></div>
                 </section>
               </div> : <div className="empty-state"><div><strong>Select a note</strong><p>Choose a note from the list or create a new one with ⌘ N.</p></div></div>}
-            </ScrollArea>
           </section>
         </main>
       </div>

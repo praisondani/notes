@@ -660,7 +660,7 @@ export function NotesApp() {
             <Tooltip><TooltipTrigger asChild><Button asChild variant="ghost" size="icon-sm" aria-label="Open settings"><Link href="/settings"><Settings className="h-4 w-4" /></Link></Button></TooltipTrigger><TooltipContent>Settings</TooltipContent></Tooltip>
             <Tooltip><TooltipTrigger asChild><Button variant="ghost" size="icon-sm" aria-label="Keyboard shortcuts" onClick={() => setShortcutsDialogOpen(true)}><Keyboard className="h-4 w-4" /></Button></TooltipTrigger><TooltipContent>Keyboard shortcuts</TooltipContent></Tooltip>
             <Tooltip><TooltipTrigger asChild><Button variant="ghost" size="icon-sm" aria-label={darkMode ? "Use light theme" : "Use dark theme"} onClick={() => setTheme(!darkMode)}>{darkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}</Button></TooltipTrigger><TooltipContent>{darkMode ? "Use light theme" : "Use dark theme"}</TooltipContent></Tooltip>
-            <Button variant="outline" size="sm" aria-label="New note" onClick={createNewNote}><Plus className="h-4 w-4" /><span className="desktop-label">New note</span></Button>
+            <Button variant="outline" size="sm" aria-label="New note" onClick={() => createNewNote()}><Plus className="h-4 w-4" /><span className="desktop-label">New note</span></Button>
           </div>
         </header>
 

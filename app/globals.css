@@ -477,7 +477,8 @@ button:disabled {
 
 .collection-nav-item .collection-name {
   overflow: visible;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
   text-overflow: clip;
   white-space: normal;
   line-height: 1.25;
@@ -494,15 +495,16 @@ button:disabled {
 }
 
 .collection-actions {
-  display: flex;
   flex: none;
   gap: 1px;
+  display: none;
   opacity: 0;
   transition: opacity 150ms ease-out;
 }
 
 .collection-nav-row:hover .collection-actions,
 .collection-nav-row:focus-within .collection-actions {
+  display: flex;
   opacity: 1;
 }
 

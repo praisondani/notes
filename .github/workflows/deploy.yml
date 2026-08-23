@@ -35,4 +35,4 @@ jobs:
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
           DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
         run: |
-          ssh -i ~/.ssh/notes_deploy "$DEPLOY_USER@$DEPLOY_HOST" "cd '$DEPLOY_PATH' && git fetch --tags origin && git checkout --force '$GITHUB_REF_NAME' && docker compose up -d --build"
+          ssh -i ~/.ssh/notes_deploy "$DEPLOY_USER@$DEPLOY_HOST" "cd '$DEPLOY_PATH' && git fetch --tags origin && git checkout --force --detach '$GITHUB_SHA' && docker compose up -d --build"

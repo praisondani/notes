@@ -2,6 +2,14 @@
 
 All notable changes are documented here.
 
+## [0.6.0] - 2026-08-22
+
+### Added
+
+- Arbitrary-depth folder trees with expandable and collapsible branches.
+- Subfolder creation, same-group drag-to-reparent, and cycle protection.
+- Clickable folder breadcrumbs in the note list and editor.
+
 ## [0.5.0] - 2026-08-22
 
 ### Added

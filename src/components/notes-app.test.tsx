@@ -81,6 +81,7 @@ describe("NotesApp keyboard parity", () => {
     const folder = await screen.findByRole("button", { name: /Projects, folder/ });
     fireEvent.doubleClick(folder);
     const renameInput = await screen.findByRole("textbox", { name: "Rename folder" });
+    expect(renameInput).toHaveClass("collection-rename-input");
     expect(screen.queryByRole("button", { name: "Save folder name" })).not.toBeInTheDocument();
     fireEvent.change(renameInput, { target: { value: "Client work" } });
     fireEvent.blur(renameInput);
@@ -109,7 +110,7 @@ describe("NotesApp keyboard parity", () => {
   it("keeps collection counts in the sidebar instead of the middle-column title", async () => {
     render(<NotesApp />);
     await screen.findByDisplayValue("A quieter place for your notes");
-    const allNotesNavItem = screen.getByRole("button", { name: /All notes/ });
+    const allNotesNavItem = within(document.querySelector(".nav-list") as HTMLElement).getByRole("button", { name: /All notes/ });
     expect(allNotesNavItem.querySelector(".count")).toHaveTextContent("3");
     expect(document.querySelector(".list-title-count")).not.toBeInTheDocument();
     expect(document.querySelector(".list-title-row")?.textContent).toBe("All notes");
@@ -148,6 +149,33 @@ describe("NotesApp keyboard parity", () => {
     const createdFolder = await screen.findByRole("button", { name: /Client work, folder/ });
     expect(createdFolder).toBeInTheDocument();
     expect(within(createdFolder.closest(".collection-nav-row") as HTMLElement).getByRole("button", { name: "Choose folder color for Client work" }).querySelector("svg")).toHaveClass("blue");
+  });
+
+  it("creates, collapses, and navigates nested folders with breadcrumbs", async () => {
+    render(<NotesApp />);
+    await screen.findByDisplayValue("A quieter place for your notes");
+
+    fireEvent.click(screen.getByRole("button", { name: "Add subfolder to Projects" }));
+    const input = screen.getByRole("textbox", { name: "New subfolder name" });
+    fireEvent.change(input, { target: { value: "Client work" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    const child = await screen.findByRole("button", { name: /Client work, folder/ });
+    expect(child.closest(".folder-tree-node")?.parentElement).toHaveClass("folder-tree-node");
+    expect(screen.getByRole("button", { name: "Collapse folder Projects" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Collapse folder Projects" }));
+    expect(screen.queryByRole("button", { name: /Client work, folder/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Expand folder Projects" }));
+    const expandedChild = screen.getByRole("button", { name: /Client work, folder/ });
+    expect(expandedChild).toBeInTheDocument();
+
+    fireEvent.click(expandedChild);
+    const breadcrumbs = screen.getByRole("navigation", { name: "Folder breadcrumbs" });
+    expect(breadcrumbs).toHaveTextContent("All notes");
+    expect(breadcrumbs).toHaveTextContent("Work");
+    expect(breadcrumbs).toHaveTextContent("Projects");
+    expect(breadcrumbs).toHaveTextContent("Client work");
   });
 
   it("creates a group from its name field when focus leaves it", async () => {
@@ -194,6 +222,8 @@ describe("NotesApp keyboard parity", () => {
 
     const projectsRow = screen.getByRole("button", { name: /Projects, folder/ }).closest(".folder-tree-node");
     expect(projectsRow).toBeInTheDocument();
+    expect(projectsRow?.querySelectorAll(".collection-color-trigger")).toHaveLength(1);
+    expect(projectsRow?.querySelectorAll(".collection-nav-item")).toHaveLength(1);
     const colorTrigger = within(projectsRow as HTMLElement).getByRole("button", { name: "Choose folder color for Projects" });
     fireEvent.keyDown(colorTrigger, { key: "Enter" });
     expect(await screen.findAllByRole("menuitem")).toHaveLength(9);

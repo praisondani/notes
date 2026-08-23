@@ -46,7 +46,7 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { createId, createNote, filterNotes, getNotePreview, isNoteEmpty, reorderChecklist, reorderNotes, toggleArchived, toggleChecklist, togglePinned, updateNote, withDerivedTitle } from "@/lib/notes";
+import { canMoveFolder, createId, createNote, filterNotes, getFolderPath, getNotePreview, isNoteEmpty, moveFolder, reorderChecklist, reorderNotes, toggleArchived, toggleChecklist, togglePinned, updateNote, withDerivedTitle } from "@/lib/notes";
 import type { Attachment, Folder as NoteFolder, Group, Note, NoteFilter, NoteQuery, Workspace } from "@/lib/types";
 import { applyTheme, readThemePreference, resolveDarkTheme, setThemePreference as saveThemePreference, type ThemePreference } from "@/lib/theme";
 import { cn, formatBytes, formatDate } from "@/lib/utils";
@@ -180,6 +180,7 @@ export function NotesApp() {
   const [newGroupName, setNewGroupName] = useState("");
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [creatingFolderGroupId, setCreatingFolderGroupId] = useState<string | null>(null);
+  const [creatingFolderParentId, setCreatingFolderParentId] = useState<string | null>(null);
   const [creatingGroup, setCreatingGroup] = useState(false);
   const folderCreationCommittedRef = useRef(false);
   const groupCreationCommittedRef = useRef(false);
@@ -192,6 +193,8 @@ export function NotesApp() {
   const [authRequired, setAuthRequired] = useState(false);
   const [saveState, setSaveState] = useState<SaveState>("saved");
   const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [draggingFolderId, setDraggingFolderId] = useState<string | null>(null);
+  const [collapsedFolderIds, setCollapsedFolderIds] = useState<string[]>([]);
   const [checklistDraggingId, setChecklistDraggingId] = useState<string | null>(null);
   const [themePreference, setThemePreferenceState] = useState<ThemePreference>(() => readThemePreference());
   const [darkMode, setDarkMode] = useState(() => resolveDarkTheme(readThemePreference()));
@@ -204,8 +207,6 @@ export function NotesApp() {
 
   const selectedNote = workspace.notes.find((note) => note.id === selectedNoteId) ?? null;
   const filteredNotes = useMemo(() => filterNotes(workspace.notes, query), [workspace.notes, query]);
-  const selectedFolder = workspace.folders.find((folder) => folder.id === selectedNote?.folderId);
-  const selectedGroup = workspace.groups.find((group) => group.id === selectedNote?.groupId);
   const activeFolder = query.folderId ? workspace.folders.find((folder) => folder.id === query.folderId) : undefined;
   const activeGroup = query.groupId ? workspace.groups.find((group) => group.id === query.groupId) : undefined;
   const activeCollection = activeFolder ?? activeGroup;
@@ -398,6 +399,49 @@ export function NotesApp() {
     setMobilePane("editor");
   }
 
+  function toggleFolderExpanded(folderId: string) {
+    setCollapsedFolderIds((current) => current.includes(folderId)
+      ? current.filter((id) => id !== folderId)
+      : [...current, folderId]);
+  }
+
+  function folderHasChildren(folderId: string): boolean {
+    return workspace.folders.some((folder) => folder.parentId === folderId);
+  }
+
+  function renderBreadcrumbs(folderId: string | null, groupId: string | null, filter: NoteFilter, surface: "list" | "editor") {
+    const folder = folderId === null ? undefined : workspace.folders.find((candidate) => candidate.id === folderId);
+    const effectiveGroupId = folder?.groupId ?? groupId;
+    const group = effectiveGroupId === null || effectiveGroupId === undefined
+      ? undefined
+      : workspace.groups.find((candidate) => candidate.id === effectiveGroupId);
+    const folderPath = getFolderPath(workspace.folders, folderId);
+    const rootLabel = filter === "inbox" ? "Inbox" : filter === "pinned" ? "Pinned" : filter === "archived" ? "Archive" : filter === "links" ? "With links" : filter === "files" ? "With files" : "All notes";
+    const items: Array<{ id: string; label: string; query?: NoteQuery }> = [];
+
+    if (!group && folderPath.length === 0) {
+      items.push({ id: `root-${surface}`, label: rootLabel });
+    } else {
+      items.push({ id: `all-${surface}`, label: "All notes", query: { search: "", filter: "all", folderId: null, groupId: null } });
+      if (group) items.push({ id: group.id, label: group.name, query: { search: "", filter: "all", folderId: null, groupId: group.id } });
+      for (const pathFolder of folderPath) {
+        items.push({ id: pathFolder.id, label: pathFolder.name, query: { search: "", filter: "all", folderId: pathFolder.id, groupId: pathFolder.groupId } });
+      }
+    }
+
+    return <nav className={cn("breadcrumbs", surface === "list" && "list-breadcrumbs")} aria-label={surface === "list" ? "Folder breadcrumbs" : "Note location"}>
+      <ol>
+        {items.map((item, index) => {
+          const itemQuery = item.query;
+          return <li key={item.id}>
+          {index > 0 && <span className="breadcrumb-separator" aria-hidden="true">/</span>}
+          {itemQuery ? <button type="button" onClick={() => selectNoteView(itemQuery)}>{item.label}</button> : <span aria-current="page">{item.label}</span>}
+        </li>;
+        })}
+      </ol>
+    </nav>;
+  }
+
   function moveSelected(folderId: string | null) {
     if (!selectedNoteId) return;
     setWorkspace((current) => {
@@ -516,11 +560,15 @@ export function NotesApp() {
     setDeleteTarget(null);
   }
 
-  function startFolderCreation(groupId: string | null) {
+  function startFolderCreation(groupId: string | null, parentId: string | null = null) {
     saveSidebarCollapsedPreference(false);
     setNewFolderName("");
     folderCreationCommittedRef.current = false;
     setCreatingFolderGroupId(groupId);
+    setCreatingFolderParentId(parentId);
+    if (parentId !== null) {
+      setCollapsedFolderIds((current) => current.filter((id) => id !== parentId));
+    }
     setCreatingFolder(true);
   }
 
@@ -529,13 +577,16 @@ export function NotesApp() {
     const name = newFolderName.trim();
     if (!name) return;
     folderCreationCommittedRef.current = true;
+    const parentId = creatingFolderParentId;
+    const groupId = creatingFolderGroupId;
     setWorkspace((current) => ({
       ...current,
-      folders: [...current.folders, { id: createId("folder"), name, parentId: null, groupId: creatingFolderGroupId, color: nextCollectionColor(current), position: current.folders.length }],
+      folders: [...current.folders, { id: createId("folder"), name, parentId, groupId: parentId === null ? groupId : current.folders.find((folder) => folder.id === parentId)?.groupId ?? groupId, color: nextCollectionColor(current), position: current.folders.length }],
     }));
     setNewFolderName("");
     setCreatingFolder(false);
     setCreatingFolderGroupId(null);
+    setCreatingFolderParentId(null);
   }
 
   function createFolder(event: FormEvent<HTMLFormElement>) {
@@ -561,10 +612,31 @@ export function NotesApp() {
     commitNewGroup();
   }
 
+  function getDragPayload(event: React.DragEvent): { kind: "note" | "folder"; id: string } | null {
+    const folderId = event.dataTransfer.getData("application/x-notes-folder");
+    if (folderId) return { kind: "folder", id: folderId };
+    const noteId = event.dataTransfer.getData("application/x-notes-note");
+    if (noteId) return { kind: "note", id: noteId };
+    const raw = event.dataTransfer.getData("text/plain");
+    if (raw.startsWith("folder:")) return { kind: "folder", id: raw.slice("folder:".length) };
+    if (raw.startsWith("note:")) return { kind: "note", id: raw.slice("note:".length) };
+    return raw ? { kind: "note", id: raw } : null;
+  }
+
   function handleFolderDrop(event: React.DragEvent<HTMLButtonElement>, folderId: string | null) {
     event.preventDefault();
     event.stopPropagation();
-    const noteId = event.dataTransfer.getData("text/plain") || draggingId;
+    const payload = getDragPayload(event);
+    if (payload?.kind === "folder") {
+      setWorkspace((current) => {
+        if (!current.folders.some((folder) => folder.id === payload.id)) return current;
+        if (folderId !== null && !canMoveFolder(current.folders, payload.id, folderId)) return current;
+        return { ...current, folders: moveFolder(current.folders, payload.id, folderId) };
+      });
+      setDraggingFolderId(null);
+      return;
+    }
+    const noteId = payload?.kind === "note" ? payload.id : draggingId;
     if (!noteId) return;
     setWorkspace((current) => {
       const folder = folderId === null ? undefined : current.folders.find((candidate) => candidate.id === folderId);
@@ -576,7 +648,17 @@ export function NotesApp() {
   function handleGroupDrop(event: React.DragEvent<HTMLButtonElement>, groupId: string) {
     event.preventDefault();
     event.stopPropagation();
-    const noteId = event.dataTransfer.getData("text/plain") || draggingId;
+    const payload = getDragPayload(event);
+    if (payload?.kind === "folder") {
+      setWorkspace((current) => {
+        const folder = current.folders.find((candidate) => candidate.id === payload.id);
+        if (!folder || folder.groupId !== groupId) return current;
+        return { ...current, folders: moveFolder(current.folders, payload.id, null) };
+      });
+      setDraggingFolderId(null);
+      return;
+    }
+    const noteId = payload?.kind === "note" ? payload.id : draggingId;
     if (!noteId) return;
     setWorkspace((current) => ({ ...current, notes: updateNote(current.notes, noteId, { folderId: null, groupId }) }));
     setDraggingId(null);
@@ -585,7 +667,8 @@ export function NotesApp() {
   function handleNoteDrop(event: React.DragEvent<HTMLButtonElement>, targetId: string) {
     event.preventDefault();
     event.stopPropagation();
-    const sourceId = event.dataTransfer.getData("text/plain") || draggingId;
+    const payload = getDragPayload(event);
+    const sourceId = payload?.kind === "note" ? payload.id : draggingId;
     if (!sourceId) return;
     setWorkspace((current) => ({ ...current, notes: reorderNotes(current.notes, sourceId, targetId) }));
     setDraggingId(null);
@@ -699,9 +782,10 @@ export function NotesApp() {
     return <button key={itemKey} type="button" className="nav-item" data-active={active} data-drop-target={onDrop ? "folder" : undefined} onClick={onClick} onDragOver={(event) => { if (!onDrop) return; event.preventDefault(); event.dataTransfer.dropEffect = "move"; }} onDrop={onDrop} aria-current={active ? "page" : undefined} title={label}>{icon}<span className="nav-item-label">{label}</span>{typeof count === "number" && <span className="count">{count}</span>}</button>;
   }
 
-  function folderCreationForm(groupId: string | null) {
-    return <form className="inline-create" key={`new-folder-${groupId ?? "global"}`} onSubmit={createFolder}>
-      <Input autoFocus value={newFolderName} onChange={(event) => setNewFolderName(event.target.value)} onBlur={commitNewFolder} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); commitNewFolder(); } if (event.key === "Escape") { setNewFolderName(""); setCreatingFolder(false); setCreatingFolderGroupId(null); } }} placeholder="Folder name" aria-label="New folder name" />
+  function folderCreationForm(groupId: string | null, parentId: string | null = null) {
+    const isSubfolder = parentId !== null;
+    return <form className="inline-create" key={`new-folder-${groupId ?? "global"}-${parentId ?? "root"}`} onSubmit={createFolder}>
+      <Input autoFocus value={newFolderName} onChange={(event) => setNewFolderName(event.target.value)} onBlur={commitNewFolder} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); commitNewFolder(); } if (event.key === "Escape") { setNewFolderName(""); setCreatingFolder(false); setCreatingFolderGroupId(null); setCreatingFolderParentId(null); } }} placeholder={isSubfolder ? "Subfolder name" : "Folder name"} aria-label={isSubfolder ? "New subfolder name" : "New folder name"} />
     </form>;
   }
 
@@ -710,27 +794,32 @@ export function NotesApp() {
       .filter((folder) => folder.groupId === groupId && folder.parentId === parentId)
       .sort((left, right) => left.position - right.position)
       .map((folder) => <div className="folder-tree-node" key={folder.id}>
-        {collectionRow("folder", folder, workspace.notes.filter((note) => note.folderId === folder.id && !note.archived).length, (event) => handleFolderDrop(event, folder.id))}
-        {folderTree(groupId, folder.id)}
+        {collectionRow("folder", folder, workspace.notes.filter((note) => note.folderId === folder.id && !note.archived).length, (event) => handleFolderDrop(event, folder.id), { hasChildren: folderHasChildren(folder.id), expanded: !collapsedFolderIds.includes(folder.id), onToggle: () => toggleFolderExpanded(folder.id) })}
+        {creatingFolder && creatingFolderParentId === folder.id && folderCreationForm(folder.groupId, folder.id)}
+        {!collapsedFolderIds.includes(folder.id) && folderTree(groupId, folder.id)}
       </div>);
   }
 
-  function collectionRow(kind: CollectionKind, collection: NoteFolder | Group, count: number, onDrop?: (event: React.DragEvent<HTMLButtonElement>) => void) {
+  function collectionRow(kind: CollectionKind, collection: NoteFolder | Group, count: number, onDrop?: (event: React.DragEvent<HTMLButtonElement>) => void, treeOptions: { hasChildren?: boolean; expanded?: boolean; onToggle?: () => void } = {}) {
     const target: CollectionTarget = { kind, id: collection.id };
     const editing = editingCollectionSurface === "sidebar" && editingCollection?.kind === target.kind && editingCollection.id === target.id;
     const collectionLabel = collectionKindLabel(kind);
-    const folderGroupId = kind === "folder" ? (collection as NoteFolder).groupId : null;
+    const folder = kind === "folder" ? collection as NoteFolder : undefined;
+    const folderGroupId = folder?.groupId ?? null;
     const active = (kind === "folder" ? query.folderId : query.groupId) === collection.id;
     return <div className="collection-nav-row" key={collection.id} data-editing={editing}>
       {editing ? <form className="collection-rename-form" onSubmit={saveInlineCollectionRename}>
-        <Input ref={collectionRenameRef} value={collectionNameDraft} onChange={(event) => setCollectionNameDraft(event.target.value)} onBlur={commitInlineCollectionRename} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); commitInlineCollectionRename(); } if (event.key === "Escape") { event.preventDefault(); setEditingCollection(null); setEditingCollectionSurface(null); } }} aria-label={`Rename ${collectionLabel}`} />
+        <Input ref={collectionRenameRef} value={collectionNameDraft} onChange={(event) => setCollectionNameDraft(event.target.value)} onBlur={commitInlineCollectionRename} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); commitInlineCollectionRename(); } if (event.key === "Escape") { event.preventDefault(); setEditingCollection(null); setEditingCollectionSurface(null); } }} className="collection-rename-input" aria-label={`Rename ${collectionLabel}`} />
       </form> : <>
+        {kind === "folder" && <span className={cn("folder-tree-toggle", !treeOptions.hasChildren && "is-empty")}>
+          {treeOptions.hasChildren && <Button type="button" variant="ghost" size="icon-sm" aria-label={`${treeOptions.expanded ? "Collapse" : "Expand"} folder ${collection.name}`} onClick={(event) => { event.stopPropagation(); treeOptions.onToggle?.(); }}><ChevronDown className={cn("h-3.5 w-3.5", !treeOptions.expanded && "-rotate-90")} /></Button>}
+        </span>}
         <CollectionColorPicker kind={kind} collection={collection} onChange={(color) => updateCollectionColor(target, color)} />
-        <button type="button" className="nav-item collection-nav-item" data-active={active} data-drop-target={onDrop ? "folder" : undefined} onClick={() => selectNoteView({ search: "", filter: "all", folderId: kind === "folder" ? collection.id : null, groupId: kind === "folder" ? folderGroupId : collection.id })} onDoubleClick={() => beginCollectionRename(target, "sidebar")} onKeyDown={(event) => handleCollectionKeyDown(event, target, "sidebar")} onDragOver={(event) => { if (!onDrop) return; event.preventDefault(); event.dataTransfer.dropEffect = "move"; }} onDrop={onDrop} aria-current={active ? "page" : undefined} aria-keyshortcuts="F2 Delete" aria-label={`${collection.name}, ${collectionLabel}. Double-click or press F2 to rename`} title={`${collection.name} · ${collectionLabel}`}>
+        <button type="button" className="nav-item collection-nav-item" data-active={active} data-drop-target={onDrop ? "folder" : undefined} draggable={kind === "folder"} onClick={() => selectNoteView({ search: "", filter: "all", folderId: kind === "folder" ? collection.id : null, groupId: kind === "folder" ? folderGroupId : collection.id })} onDoubleClick={() => beginCollectionRename(target, "sidebar")} onKeyDown={(event) => handleCollectionKeyDown(event, target, "sidebar")} onDragStart={kind === "folder" ? (event) => { event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("application/x-notes-folder", collection.id); event.dataTransfer.setData("text/plain", `folder:${collection.id}`); setDraggingFolderId(collection.id); } : undefined} onDragEnd={kind === "folder" ? () => setDraggingFolderId(null) : undefined} onDragOver={(event) => { if (!onDrop) return; event.preventDefault(); event.dataTransfer.dropEffect = "move"; }} onDrop={onDrop} data-dragging={draggingFolderId === collection.id} aria-current={active ? "page" : undefined} aria-keyshortcuts="F2 Delete" aria-label={`${collection.name}, ${collectionLabel}. Double-click or press F2 to rename`} title={`${collection.name} · ${collectionLabel}`}>
           <span className="nav-item-label collection-name">{collection.name}</span><span className="count">{count}</span>
         </button>
         <div className="collection-actions">
-          {kind === "group" && <Tooltip><TooltipTrigger asChild><Button type="button" variant="ghost" size="icon-sm" className="collection-action" aria-label={`Add folder to group ${collection.name}`} onClick={() => startFolderCreation(collection.id)}><FolderPlus className="h-3.5 w-3.5" /></Button></TooltipTrigger><TooltipContent>Add folder</TooltipContent></Tooltip>}
+          <Tooltip><TooltipTrigger asChild><Button type="button" variant="ghost" size="icon-sm" className="collection-action" aria-label={kind === "folder" ? `Add subfolder to ${collection.name}` : `Add folder to group ${collection.name}`} onClick={() => startFolderCreation(kind === "folder" ? folderGroupId : collection.id, kind === "folder" ? collection.id : null)}><FolderPlus className="h-3.5 w-3.5" /></Button></TooltipTrigger><TooltipContent>{kind === "folder" ? "Add subfolder" : "Add folder"}</TooltipContent></Tooltip>
         </div>
       </>}
     </div>;
@@ -801,6 +890,7 @@ export function NotesApp() {
 
           <section className="note-list" aria-label="Notes">
             <div className="note-list-header">
+              {renderBreadcrumbs(query.folderId, query.groupId, query.filter, "list")}
               <div className="list-title-row">
                 <div className="list-title-actions">
                   {activeCollection && activeCollectionTarget ? (editingCollectionSurface === "title" && editingCollection?.kind === activeCollectionTarget.kind && editingCollection.id === activeCollectionTarget.id ? <form className="list-title-form" onSubmit={saveInlineCollectionRename}><Input ref={collectionRenameRef} autoFocus value={collectionNameDraft} onChange={(event) => setCollectionNameDraft(event.target.value)} onBlur={commitInlineCollectionRename} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); setEditingCollection(null); setEditingCollectionSurface(null); } }} aria-label={`Rename ${collectionKindLabel(activeCollectionTarget.kind)}`} /></form> : <button type="button" className="list-title-button" onDoubleClick={() => beginCollectionRename(activeCollectionTarget, "title")} onKeyDown={(event) => handleCollectionKeyDown(event, activeCollectionTarget, "title")} aria-keyshortcuts="F2 Delete" aria-label={`${activeCollection.name}, ${collectionKindLabel(activeCollectionTarget.kind)}. Double-click or press F2 to rename`}><CollectionShape kind={activeCollectionTarget.kind} color={activeCollection.color} /><span>{activeCollection.name}</span></button>) : <h1>{listTitle}</h1>}
@@ -833,7 +923,7 @@ export function NotesApp() {
               <div className="note-list-items" role="listbox" aria-label="Note list" aria-activedescendant={selectedNoteId ?? undefined}>
                 {loading && <div className="empty-state"><div><strong>Loading notes</strong><p>Opening your local workspace.</p></div></div>}
                 {!loading && !filteredNotes.length && <div className="empty-state"><div><strong>No notes found</strong><p>Try another search or create a new note.</p><Button className="mt-4" size="sm" onClick={createNoteInActiveCollection}><Plus className="h-4 w-4" />New note</Button></div></div>}
-                {filteredNotes.map((note) => <button key={note.id} id={note.id} data-note-id={note.id} type="button" role="option" aria-selected={selectedNoteId === note.id} className="note-row" data-selected={selectedNoteId === note.id} data-dragging={draggingId === note.id} draggable onDragStart={(event) => { event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", note.id); setDraggingId(note.id); }} onDragEnd={() => setDraggingId(null)} onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; }} onDrop={(event) => handleNoteDrop(event, note.id)} onClick={() => selectNote(note.id)} onKeyDown={handleNoteKeyDown}>
+                {filteredNotes.map((note) => <button key={note.id} id={note.id} data-note-id={note.id} type="button" role="option" aria-selected={selectedNoteId === note.id} className="note-row" data-selected={selectedNoteId === note.id} data-dragging={draggingId === note.id} draggable onDragStart={(event) => { event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("application/x-notes-note", note.id); event.dataTransfer.setData("text/plain", `note:${note.id}`); setDraggingId(note.id); }} onDragEnd={() => setDraggingId(null)} onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; }} onDrop={(event) => handleNoteDrop(event, note.id)} onClick={() => selectNote(note.id)} onKeyDown={handleNoteKeyDown}>
                   <span className="note-row-title"><span>{note.title || "Untitled note"}</span>{note.pinned && <Pin className="h-3 w-3 shrink-0 text-primary" aria-label="Pinned" />}</span>
                   <span className="note-row-preview">{getNotePreview(note)}</span>
                   <span className="note-meta"><span>{formatDate(note.updatedAt)}</span>{note.attachments.length > 0 && <><span aria-hidden="true">·</span><Paperclip className="h-3 w-3" /></>}<span className="note-meta-end">{note.tags[0] ? `#${note.tags[0]}` : ""}</span></span>
@@ -844,7 +934,7 @@ export function NotesApp() {
 
           <section className="editor" aria-label="Note editor">
             <div className="editor-header">
-              <div className="editor-meta"><Button variant="ghost" size="icon-sm" className="mobile-only" aria-label="Back to notes" onClick={() => { leaveSelectedNote(null); setMobilePane("list"); }}><ArrowLeft className="h-4 w-4" /></Button><span className="breadcrumb">{selectedFolder?.name ?? "Inbox"}{selectedGroup ? ` / ${selectedGroup.name}` : ""}</span>{saveState === "saving" && <span>Saving…</span>}{saveState === "saved" && <span>Saved</span>}{saveState === "error" && <span className="text-destructive">Save error</span>}</div>
+              <div className="editor-meta"><Button variant="ghost" size="icon-sm" className="mobile-only" aria-label="Back to notes" onClick={() => { leaveSelectedNote(null); setMobilePane("list"); }}><ArrowLeft className="h-4 w-4" /></Button>{renderBreadcrumbs(selectedNote?.folderId ?? null, selectedNote?.groupId ?? null, selectedNote?.archived ? "archived" : "inbox", "editor")}{saveState === "saving" && <span>Saving…</span>}{saveState === "saved" && <span>Saved</span>}{saveState === "error" && <span className="text-destructive">Save error</span>}</div>
               <div className="toolbar-actions">
                 {selectedNote && <Tooltip><TooltipTrigger asChild><Button variant="ghost" size="icon-sm" aria-label={selectedNote.pinned ? "Unpin note" : "Pin note"} onClick={() => setWorkspace((current) => ({ ...current, notes: togglePinned(current.notes, selectedNote.id) }))}>{selectedNote.pinned ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}</Button></TooltipTrigger><TooltipContent>{selectedNote.pinned ? "Unpin note" : "Pin note"}</TooltipContent></Tooltip>}
                 {selectedNote && <Tooltip><TooltipTrigger asChild><Button variant="ghost" size="icon-sm" aria-label={selectedNote.archived ? "Restore note" : "Archive note"} onClick={() => setWorkspace((current) => ({ ...current, notes: toggleArchived(current.notes, selectedNote.id) }))}>{selectedNote.archived ? <ArchiveRestore className="h-4 w-4" /> : <Archive className="h-4 w-4" />}</Button></TooltipTrigger><TooltipContent>{selectedNote.archived ? "Restore note" : "Archive note"}</TooltipContent></Tooltip>}

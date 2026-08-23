@@ -1,4 +1,4 @@
-import type { ChecklistItem, Note, NoteFilter, NoteQuery, Workspace, WorkspaceInput } from "@/lib/types";
+import type { ChecklistItem, Folder, Note, NoteFilter, NoteQuery, Workspace, WorkspaceInput } from "@/lib/types";
 
 export function createId(prefix: string): string {
   const random = typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -106,6 +106,36 @@ export function updateNote(notes: Note[], noteId: string, patch: Partial<Note>, 
 
 export function moveNote(notes: Note[], noteId: string, folderId: string | null, now = new Date()): Note[] {
   return updateNote(notes, noteId, { folderId }, now);
+}
+
+export function getFolderPath(folders: Folder[], folderId: string | null): Folder[] {
+  if (folderId === null) return [];
+  const foldersById = new Map(folders.map((folder) => [folder.id, folder]));
+  const path: Folder[] = [];
+  const visited = new Set<string>();
+  let current = foldersById.get(folderId);
+
+  while (current && !visited.has(current.id)) {
+    visited.add(current.id);
+    path.unshift(current);
+    current = current.parentId === null ? undefined : foldersById.get(current.parentId);
+  }
+
+  return path;
+}
+
+export function canMoveFolder(folders: Folder[], folderId: string, parentId: string | null): boolean {
+  const folder = folders.find((candidate) => candidate.id === folderId);
+  if (!folder) return false;
+  if (parentId === null) return true;
+  const parent = folders.find((candidate) => candidate.id === parentId);
+  if (!parent || parent.id === folder.id || parent.groupId !== folder.groupId) return false;
+  return !getFolderPath(folders, parent.id).some((candidate) => candidate.id === folder.id);
+}
+
+export function moveFolder(folders: Folder[], folderId: string, parentId: string | null): Folder[] {
+  if (!canMoveFolder(folders, folderId, parentId)) return folders;
+  return folders.map((folder) => folder.id === folderId ? { ...folder, parentId } : folder);
 }
 
 export function togglePinned(notes: Note[], noteId: string, now = new Date()): Note[] {

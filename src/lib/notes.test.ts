@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { createNote, ensureWorkspace, filterNotes, firstSentence, isNoteEmpty, moveNote, noteMatchesSearch, reorderChecklist, reorderNotes, toggleChecklist, togglePinned, updateNote, withDerivedTitle } from "@/lib/notes";
-import type { ChecklistItem, Note } from "@/lib/types";
+import { canMoveFolder, createNote, ensureWorkspace, filterNotes, firstSentence, getFolderPath, isNoteEmpty, moveFolder, moveNote, noteMatchesSearch, reorderChecklist, reorderNotes, toggleChecklist, togglePinned, updateNote, withDerivedTitle } from "@/lib/notes";
+import type { ChecklistItem, Folder, Note } from "@/lib/types";
 
 const now = new Date("2026-08-20T12:00:00.000Z");
 
@@ -80,6 +80,20 @@ describe("note domain", () => {
     ];
     expect(reorderChecklist(checklist, "three", "one")).toEqual([checklist[2], checklist[0], checklist[1]]);
     expect(reorderChecklist(checklist, "missing", "one")).toEqual(checklist);
+  });
+
+  it("supports nested folder paths and prevents hierarchy cycles or cross-group moves", () => {
+    const folders: Folder[] = [
+      { id: "root", name: "Projects", parentId: null, groupId: "work", color: "green", position: 0 },
+      { id: "child", name: "Client work", parentId: "root", groupId: "work", color: "blue", position: 1 },
+      { id: "grandchild", name: "Research", parentId: "child", groupId: "work", color: "slate", position: 2 },
+      { id: "personal", name: "Personal", parentId: null, groupId: "personal", color: "amber", position: 3 },
+    ];
+
+    expect(getFolderPath(folders, "grandchild").map((folder) => folder.name)).toEqual(["Projects", "Client work", "Research"]);
+    expect(canMoveFolder(folders, "root", "grandchild")).toBe(false);
+    expect(canMoveFolder(folders, "personal", "child")).toBe(false);
+    expect(moveFolder(folders, "grandchild", "root").find((folder) => folder.id === "grandchild")?.parentId).toBe("root");
   });
 
   it("migrates legacy folders into group-owned hubs when ownership is unambiguous", () => {

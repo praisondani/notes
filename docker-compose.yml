@@ -1,16 +1,32 @@
 services:
   notes:
     build: .
+    image: notes:node22.23.4
     restart: unless-stopped
+    init: true
+    user: "1001:1001"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     env_file:
       - .env
     environment:
+      NODE_OPTIONS: --use-openssl-ca
+      SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
+      SSL_CERT_DIR: /etc/ssl/certs/empty-app-trust
       DATA_DIR: /app/data
       PORT: 3000
     ports:
-      - "${NOTES_PORT:-3000}:3000"
+      - "127.0.0.1:${NOTES_PORT:-3000}:3000"
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m,mode=1777
+      - /app/.next/cache:rw,noexec,nosuid,size=256m,mode=0755,uid=1001,gid=1001
     volumes:
       - notes-data:/app/data
+      - /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro
+      - /var/lib/app-trust/empty-ca-dir:/etc/ssl/certs/empty-app-trust:ro
     healthcheck:
       test: ["CMD", "wget", "--spider", "--quiet", "http://127.0.0.1:3000/"]
       interval: 30s

@@ -4,6 +4,7 @@ RUN apk upgrade --no-cache
 FROM base AS dependencies
 WORKDIR /app
 COPY package.json package-lock.json ./
+COPY vendor/braces ./vendor/braces
 RUN npm ci
 
 FROM base AS builder

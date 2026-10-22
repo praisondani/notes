@@ -13,6 +13,7 @@
     "build": "next build --webpack",
     "start": "node .next/standalone/server.js",
     "lint": "eslint app src scripts next.config.ts vitest.config.ts eslint.config.mjs",
+    "pretest": "node scripts/security/braces-depth.test.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "mcp:stdio": "tsx src/mcp/stdio.ts",
@@ -50,12 +51,13 @@
     "@types/react": "^19.1.10",
     "@types/react-dom": "^19.1.7",
     "@vitejs/plugin-react": "^5.0.4",
-    "eslint": "^9.34.0",
+    "eslint": "^10.12.0",
     "eslint-config-next": "^16.3.1",
     "jsdom": "^26.1.0",
     "tailwindcss": "^4.3.3",
     "tsx": "4.23.12",
     "typescript": "^5.9.2",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.11",
+    "braces": "file:vendor/braces"
   }
 }

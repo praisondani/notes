@@ -1,7 +1,7 @@
 services:
   notes:
     build: .
-    image: notes:node22.23.4
+    image: notes:node22.23.4-npm-free-20261023
     restart: unless-stopped
     init: true
     user: "1001:1001"

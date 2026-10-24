@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+repo=/home/ubuntu/notes
+compose_file="$repo/docker-compose.yml"
+
+read -r tag || { echo "missing release tag" >&2; exit 2; }
+read -r target_sha || { echo "missing release commit" >&2; exit 2; }
+if IFS= read -r extra; then
+  echo "unexpected extra deploy input" >&2
+  exit 2
+fi
+
+[[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "invalid release tag" >&2; exit 2; }
+[[ "$target_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "invalid release commit" >&2; exit 2; }
+
+exec 9>/run/lock/notes-deploy.lock
+flock -n 9 || { echo "another Notes deploy is running" >&2; exit 1; }
+
+git_as_app() {
+  runuser -u ubuntu -- env GIT_TERMINAL_PROMPT=0 git -C "$repo" "$@"
+}
+
+compose() {
+  docker compose --project-directory "$repo" --file "$compose_file" "$@"
+}
+
+unexpected_changes="$(git_as_app status --porcelain --untracked-files=no | grep -v '^ M docker-compose.yml$' || true)"
+if [[ -n "$unexpected_changes" ]]; then
+  echo "refusing deploy because tracked production files have local changes" >&2
+  exit 1
+fi
+
+previous_sha="$(git_as_app rev-parse HEAD)"
+[[ -f "$repo/.env" && ! -L "$repo/.env" ]] || { echo "production .env is missing or not a regular file" >&2; exit 1; }
+compose_backup="$(mktemp /run/notes-compose.XXXXXX)"
+cp -p "$compose_file" "$compose_backup"
+git_as_app fetch --no-tags origin "refs/tags/$tag:refs/tags/$tag"
+tag_sha="$(git_as_app rev-parse "$tag^{commit}")"
+[[ "$tag_sha" == "$target_sha" ]] || { echo "release tag does not match the requested commit" >&2; rm -f "$compose_backup"; exit 1; }
+if git_as_app cat-file -e "$target_sha:.env" 2>/dev/null; then
+  echo "refusing release because it tracks the production .env path" >&2
+  rm -f "$compose_backup"
+  exit 1
+fi
+
+rollback() {
+  echo "Notes deploy failed; restoring the previous release." >&2
+  git_as_app checkout --force --detach "$previous_sha" || return 1
+  cp -p "$compose_backup" "$compose_file" || return 1
+  compose up -d --build || return 1
+  rm -f "$compose_backup"
+}
+
+if ! git_as_app checkout --force --detach "$target_sha"; then
+  rm -f "$compose_backup"
+  echo "could not check out the release commit" >&2
+  exit 1
+fi
+
+if ! compose up -d --build; then
+  rollback || echo "automatic rollback failed; inspect Notes on OCI" >&2
+  exit 1
+fi
+
+container_id="$(compose ps -q notes)"
+if [[ -z "$container_id" ]]; then
+  rollback || echo "automatic rollback failed; inspect Notes on OCI" >&2
+  echo "Notes container was not created" >&2
+  exit 1
+fi
+
+health=starting
+for _ in {1..60}; do
+  health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_id" 2>/dev/null || true)"
+  case "$health" in
+    healthy|running)
+      rm -f "$compose_backup"
+      echo "deployed $tag ($target_sha); Notes is $health"
+      exit 0
+      ;;
+    unhealthy|exited|dead|"")
+      break
+      ;;
+  esac
+  sleep 2
+done
+
+rollback || echo "automatic rollback failed; inspect Notes on OCI" >&2
+echo "Notes did not become healthy; last state: ${health:-unknown}" >&2
+exit 1

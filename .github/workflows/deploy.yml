@@ -1,38 +1,101 @@
 name: Deploy
 
 on:
-  workflow_dispatch:
   push:
     tags: ["v*.*.*"]
+  workflow_dispatch:
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: github.event_name == 'push'
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: github.event_name == 'push'
         with:
-          node-version: 22
+          node-version: 22.23.4
           cache: npm
       - run: npm ci
+        if: github.event_name == 'push'
+      - run: npm audit --audit-level=low
+        if: github.event_name == 'push'
       - run: npm run check
-      - name: Configure SSH
+        if: github.event_name == 'push'
+
+      - name: Connect to production tailnet
+        uses: tailscale/github-action@99a8333667fff04fdd6cffb46dfd409f8329a7bf # v4.3.0
+        with:
+          oauth-client-id: ${{ secrets.TS_TAG_OAUTH_CLIENT_ID }}
+          audience: ${{ secrets.TS_TAG_AUDIENCE }}
+          tags: tag:ci-deploy
+
+      - name: Verify SSH host and configure key
         env:
-          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          NOTES_DEPLOY_KEY: ${{ secrets.NOTES_DEPLOY_KEY }}
+          NOTES_DEPLOY_HOST: ${{ vars.NOTES_DEPLOY_HOST }}
+          TS_SSH_HOST_FINGERPRINT: ${{ secrets.TS_SSH_HOST_FINGERPRINT }}
         run: |
-          install -m 700 -d ~/.ssh
-          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/notes_deploy
-          chmod 600 ~/.ssh/notes_deploy
-          ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
-      - name: Deploy over SSH
+          set -Eeuo pipefail
+          umask 077
+          test -n "$NOTES_DEPLOY_KEY"
+          test -n "$NOTES_DEPLOY_HOST"
+          test -n "$TS_SSH_HOST_FINGERPRINT"
+          printf '%s\n' "$NOTES_DEPLOY_KEY" > "$RUNNER_TEMP/notes-deploy-key"
+          ssh-keyscan -T 10 -t ecdsa "$NOTES_DEPLOY_HOST" > "$RUNNER_TEMP/notes-known-hosts"
+          if ! ssh-keygen -lf "$RUNNER_TEMP/notes-known-hosts" -E sha256 \
+            | awk -v expected="$TS_SSH_HOST_FINGERPRINT" '$2 == expected { found = 1 } END { exit !found }'; then
+            echo "OCI SSH host key fingerprint did not match the pinned value." >&2
+            exit 1
+          fi
+
+      - name: Verify restricted SSH access without deployment
+        if: github.event_name == 'workflow_dispatch'
         env:
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
-          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          NOTES_DEPLOY_HOST: ${{ vars.NOTES_DEPLOY_HOST }}
         run: |
-          ssh -i ~/.ssh/notes_deploy "$DEPLOY_USER@$DEPLOY_HOST" "cd '$DEPLOY_PATH' && git fetch --tags origin && git checkout --force --detach '$GITHUB_SHA' && docker compose up -d --build"
+          set -Eeuo pipefail
+          output="$RUNNER_TEMP/notes-ssh-probe-output"
+          set +e
+          printf 'invalid-probe\n%s\n' "$GITHUB_SHA" \
+            | ssh -T -i "$RUNNER_TEMP/notes-deploy-key" \
+              -o BatchMode=yes \
+              -o IdentitiesOnly=yes \
+              -o StrictHostKeyChecking=yes \
+              -o UserKnownHostsFile="$RUNNER_TEMP/notes-known-hosts" \
+              -o ConnectTimeout=10 \
+              "notes-deploy@$NOTES_DEPLOY_HOST" >"$output" 2>&1
+          status=$?
+          set -e
+          if [[ "$status" -ne 2 ]] || ! grep -Fq 'invalid release tag' "$output"; then
+            sed -n '1,80p' "$output" >&2
+            echo "Restricted SSH probe did not reach the non-mutating Notes deploy guard." >&2
+            exit 1
+          fi
+          echo "Restricted SSH authentication and forced-command guard verified; no deployment ran."
+
+      - name: Deploy release tag
+        if: github.event_name == 'push'
+        env:
+          NOTES_DEPLOY_HOST: ${{ vars.NOTES_DEPLOY_HOST }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          set -Eeuo pipefail
+          printf '%s\n%s\n' "$RELEASE_TAG" "$RELEASE_SHA" \
+            | ssh -T -i "$RUNNER_TEMP/notes-deploy-key" \
+              -o BatchMode=yes \
+              -o IdentitiesOnly=yes \
+              -o StrictHostKeyChecking=yes \
+              -o UserKnownHostsFile="$RUNNER_TEMP/notes-known-hosts" \
+              -o ConnectTimeout=10 \
+              "notes-deploy@$NOTES_DEPLOY_HOST"
+
+      - name: Verify public Notes endpoint
+        if: github.event_name == 'push'
+        run: curl --fail --silent --show-error --location --retry 12 --retry-delay 5 --retry-max-time 90 --max-time 20 https://notes.cdir.io/ -o /dev/null

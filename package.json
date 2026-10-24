@@ -59,5 +59,8 @@
     "typescript": "^5.9.2",
     "vitest": "^4.1.11",
     "braces": "file:vendor/braces"
+  },
+  "overrides": {
+    "body-parser": "2.4.0"
   }
 }

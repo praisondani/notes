@@ -178,14 +178,14 @@ Clone the public repository on the server, create `.env`, set `AUTH_SECRET` and 
 ./scripts/install.sh
 ```
 
-Put a TLS reverse proxy in front of port `3000`. The included GitHub Actions workflow expects these repository secrets:
+Put a TLS reverse proxy in front of port `3000`. The release workflow runs checks, then connects to the production server through Tailscale. It expects these repository secrets:
 
-- `DEPLOY_HOST`
-- `DEPLOY_USER`
-- `DEPLOY_PATH`
-- `DEPLOY_SSH_KEY`
+- `TS_TAG_OAUTH_CLIENT_ID`
+- `TS_TAG_AUDIENCE`
+- `TS_SSH_HOST_FINGERPRINT`
+- `NOTES_DEPLOY_KEY`
 
-The workflow runs checks, then deploys version tags over SSH. It does not contain any maintainer-specific account, bucket, or host value. On first launch, create the owner account in the browser; older installs using `AUTH_PASSWORD` are migrated automatically on the first auth request.
+Set the `NOTES_DEPLOY_HOST` repository variable to the server's Tailscale IP. The SSH key can run only the Notes release command and only from the tailnet. On first launch, create the owner account in the browser; older installs using `AUTH_PASSWORD` are migrated automatically on the first auth request.
 
 ## Architecture
 

@@ -187,6 +187,8 @@ Put a TLS reverse proxy in front of port `3000`. The release workflow runs check
 
 Set the `NOTES_DEPLOY_HOST` repository variable to the server's Tailscale IP. The SSH key can run only the Notes release command and only from the tailnet. On first launch, create the owner account in the browser; older installs using `AUTH_PASSWORD` are migrated automatically on the first auth request.
 
+To run a release, dispatch the `Deploy` workflow from `master` and enter a published `vX.Y.Z` tag. Leave `release_tag` blank to verify restricted SSH access without deploying.
+
 ## Architecture
 
 - Next.js App Router and React 19 for the web client and server routes.

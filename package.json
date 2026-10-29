@@ -61,6 +61,7 @@
     "braces": "file:vendor/braces"
   },
   "overrides": {
-    "body-parser": "2.4.0"
+    "body-parser": "2.4.0",
+    "@hono/node-server": "2.1.5"
   }
 }

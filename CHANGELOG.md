@@ -2,6 +2,12 @@
 
 All notable changes are documented here.
 
+## [0.6.1] - 2026-10-29
+
+### Security
+
+- Update the MCP server's Hono adapter to fix GHSA-rmxm-3fg6-px4f.
+
 ## [0.6.0] - 2026-08-22
 
 ### Added

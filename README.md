@@ -2,7 +2,7 @@
 
 Notes is a minimal, self-hostable private note workspace for text, images, files, links, checklists, folders, groups, filters, and search. It runs in a browser and keeps keyboard and mouse actions at parity.
 
-Version `0.6.0` adds arbitrary-depth folder trees, expandable navigation, drag-to-reparent folders, and clickable hierarchy breadcrumbs. Project-hub groups, browser-based OAuth for MCP agents, PKCE authorization, token rotation and revocation, and connected-agent controls are included; sync conflict resolution and native clients remain future work.
+Version `0.6.1` includes a security update to the MCP server's Hono adapter. Version `0.6.0` adds arbitrary-depth folder trees, expandable navigation, drag-to-reparent folders, and clickable hierarchy breadcrumbs. Project-hub groups, browser-based OAuth for MCP agents, PKCE authorization, token rotation and revocation, and connected-agent controls are included; sync conflict resolution and native clients remain future work.
 
 ## Features
 

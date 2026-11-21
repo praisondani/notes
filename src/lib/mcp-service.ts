@@ -464,6 +464,62 @@ export async function removeNoteAttachmentRecord(noteId: string, attachmentId: s
   return clone(updated ?? workspace.notes.find((note) => note.id === id) as Note);
 }
 
+export type UploadImageInput = {
+  noteId: string;
+  source: "url" | "base64";
+  data: string;
+  filename?: string;
+  mimeType?: string;
+};
+
+export async function uploadImageToNote(input: UploadImageInput): Promise<{ url: string; markdown: string }> {
+  const noteId = textValue(input.noteId, "Note ID", 200);
+  const note = (await loadWorkspace()).notes.find((n) => n.id === noteId);
+  if (!note) fail("Note not found");
+
+  if (input.source === "url") {
+    const url = textValue(input.data, "Image URL", 4_096).trim();
+    if (!url.startsWith("https://") && !url.startsWith("http://")) {
+      fail("Image URL must use http or https protocol");
+    }
+    const filename = input.filename?.trim() || "image";
+    const markdown = `![${filename}](${url})`;
+    return { url, markdown };
+  }
+
+  if (input.source === "base64") {
+    const base64Match = /^data:image\/(png|jpeg|jpg|gif|webp);base64,(.+)$/.exec(input.data.trim());
+    if (!base64Match) fail("Invalid base64 image data. Expected format: data:image/[type];base64,[data]");
+    
+    const [, imageType, base64Data] = base64Match;
+    const mimeType = `image/${imageType}`;
+    const buffer = Buffer.from(base64Data, "base64");
+    
+    if (buffer.length > MAX_ATTACHMENT_SIZE) {
+      fail(`Image size ${buffer.length} bytes exceeds maximum ${MAX_ATTACHMENT_SIZE} bytes`);
+    }
+    
+    const blob = new Blob([buffer], { type: mimeType });
+    const file = new File([blob], input.filename?.trim() || `image.${imageType}`, { type: mimeType });
+    
+    const formData = new FormData();
+    formData.append("file", file);
+    
+    try {
+      const uploadOrigin = process.env.APP_URL?.trim() || "http://localhost:3000";
+      const response = await fetch(`${uploadOrigin}/api/attachments`, { method: "POST", body: formData });
+      if (!response.ok) throw new Error("Image upload failed");
+      const stored = await response.json() as { key: string; url: string; mimeType: string; size: number };
+      const markdown = `![${input.filename?.trim() || "Image"}](${stored.url})`;
+      return { url: stored.url, markdown };
+    } catch (error) {
+      fail(`Image upload failed: ${error instanceof Error ? error.message : "Unknown error"}`);
+    }
+  }
+
+  fail("Invalid source type. Must be 'url' or 'base64'");
+}
+
 function tokenize(value: string): string[] {
   return [...new Set(value.toLocaleLowerCase().match(/[\p{L}\p{N}_-]+/gu) ?? [])].slice(0, 24);
 }

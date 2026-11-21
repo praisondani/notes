@@ -1967,6 +1967,159 @@ html.theme-switching *::after {
   }
 }
 
+.markdown-content {
+  line-height: 1.6;
+  color: var(--foreground);
+}
+
+.markdown-content h1,
+.markdown-content h2,
+.markdown-content h3,
+.markdown-content h4,
+.markdown-content h5,
+.markdown-content h6 {
+  margin-top: 24px;
+  margin-bottom: 12px;
+  font-weight: 650;
+  line-height: 1.25;
+}
+
+.markdown-content h1 {
+  font-size: 24px;
+}
+
+.markdown-content h2 {
+  font-size: 20px;
+}
+
+.markdown-content h3 {
+  font-size: 18px;
+}
+
+.markdown-content h4,
+.markdown-content h5,
+.markdown-content h6 {
+  font-size: 16px;
+}
+
+.markdown-content p {
+  margin-bottom: 12px;
+}
+
+.markdown-content strong {
+  font-weight: 650;
+}
+
+.markdown-content em {
+  font-style: italic;
+}
+
+.markdown-content code {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--muted);
+  font-family: ui-monospace, "SF Mono", "Cascadia Code", "Courier New", monospace;
+  font-size: 13px;
+}
+
+.markdown-content pre {
+  margin-bottom: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--muted);
+  overflow-x: auto;
+}
+
+.markdown-content pre code {
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.markdown-content ul,
+.markdown-content ol {
+  margin-bottom: 12px;
+  padding-left: 24px;
+}
+
+.markdown-content li {
+  margin-bottom: 4px;
+}
+
+.markdown-content ul {
+  list-style-type: disc;
+}
+
+.markdown-content ol {
+  list-style-type: decimal;
+}
+
+.markdown-content blockquote {
+  margin-bottom: 12px;
+  border-left: 3px solid var(--primary);
+  padding-left: 16px;
+  color: var(--muted-foreground);
+  font-style: italic;
+}
+
+.markdown-content a {
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.markdown-content a:hover {
+  color: var(--primary);
+  text-decoration: none;
+}
+
+.markdown-content img {
+  max-width: 100%;
+  height: auto;
+  margin: 12px 0;
+  border-radius: 8px;
+}
+
+.markdown-content hr {
+  margin: 24px 0;
+  border: none;
+  border-top: 1px solid var(--border);
+}
+
+.markdown-content table {
+  width: 100%;
+  margin-bottom: 12px;
+  border-collapse: collapse;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.markdown-content th,
+.markdown-content td {
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  text-align: left;
+}
+
+.markdown-content th {
+  background: var(--muted);
+  font-weight: 650;
+}
+
+.markdown-content input[type="checkbox"] {
+  margin-right: 8px;
+}
+
+.markdown-content > *:first-child {
+  margin-top: 0;
+}
+
+.markdown-content > *:last-child {
+  margin-bottom: 0;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

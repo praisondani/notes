@@ -22,6 +22,7 @@ import {
   updateFolderRecord,
   updateGroupRecord,
   updateNoteRecord,
+  uploadImageToNote,
   workspaceSummary,
 } from "@/lib/mcp-service";
 
@@ -108,6 +109,13 @@ const getNoteInputSchema = z.object({ note_id: identifier });
 const deleteNoteInputSchema = z.object({ note_id: identifier });
 const attachmentInputSchema = z.object({ note_id: identifier, attachment: attachmentSchema });
 const removeAttachmentInputSchema = z.object({ note_id: identifier, attachment_id: identifier });
+const uploadImageInputSchema = z.object({
+  note_id: identifier,
+  source: z.enum(["url", "base64"]),
+  data: z.string().min(1).max(10 * 1024 * 1024),
+  filename: z.string().max(200).optional(),
+  mime_type: z.string().max(150).optional(),
+});
 
 type NoteToolInput = z.infer<typeof noteInputSchema>;
 type UpdateNoteToolInput = z.infer<typeof updateNoteInputSchema>;
@@ -241,6 +249,15 @@ export function createMcpServer(context: McpServerContext): McpServer {
     inputSchema: removeAttachmentInputSchema,
     annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
   }, async (input: { note_id: string; attachment_id: string }) => execute(context, "notes:write", () => removeNoteAttachmentRecord(input.note_id, input.attachment_id)));
+
+  server.registerTool("upload_image", {
+    title: "Upload image to note",
+    description: "Upload an image from a URL or base64 data and return markdown syntax. For URLs, validates and returns markdown. For base64, uploads to storage (max 25MB). Returns markdown image syntax that can be inserted into note content.",
+    inputSchema: uploadImageInputSchema,
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+  }, async (input: { note_id: string; source: "url" | "base64"; data: string; filename?: string; mime_type?: string }) => 
+    execute(context, "notes:write", () => uploadImageToNote({ noteId: input.note_id, source: input.source, data: input.data, filename: input.filename, mimeType: input.mime_type }))
+  );
 
   server.registerTool("search_notes", {
     title: "Search notes",

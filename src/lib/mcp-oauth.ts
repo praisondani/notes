@@ -155,6 +155,8 @@ export type OAuthAccessContext = {
   userId: string;
   scopes: McpScope[];
   source: "oauth";
+  clientId: string;
+  clientName: string;
 };
 
 export type OAuthClientView = OAuthClient & {
@@ -283,7 +285,7 @@ export function buildMcpWwwAuthenticate(request: Request, invalidToken = false):
   const parts = ["Bearer"];
   if (invalidToken) parts.push('error="invalid_token"');
   parts.push(`resource_metadata="${protectedResourceMetadataUrl(origin)}"`);
-  parts.push('scope="notes:read"');
+  parts.push('scope="notes:read notes:write"');
   return `${parts[0]} ${parts.slice(1).join(", ")}`;
 }
 
@@ -609,7 +611,15 @@ export async function verifyOAuthAccessToken(token: string, resource: string): P
   if (!accessToken || accessToken.revokedAt || accessToken.expiresAt <= Math.floor(Date.now() / 1_000) || accessToken.resource !== normalizedResource) return null;
   const client = store.clients.find((candidate) => candidate.clientId === accessToken.clientId && !candidate.revokedAt);
   if (!client) return null;
-  return { tokenId: accessToken.tokenId, tokenPrefix: accessToken.tokenPrefix, userId: accessToken.userId, scopes: [...accessToken.scopes], source: "oauth" };
+  return { 
+    tokenId: accessToken.tokenId, 
+    tokenPrefix: accessToken.tokenPrefix, 
+    userId: accessToken.userId, 
+    scopes: [...accessToken.scopes], 
+    source: "oauth",
+    clientId: client.clientId,
+    clientName: client.clientName,
+  };
 }
 
 export async function revokeOAuthToken(token: string): Promise<void> {

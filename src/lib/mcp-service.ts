@@ -4,6 +4,7 @@ import type {
   Attachment,
   AttachmentKind,
   ChecklistItem,
+  ClientIdentity,
   Folder,
   Group,
   Note,
@@ -35,6 +36,13 @@ export class McpServiceError extends Error {
     this.name = "McpServiceError";
   }
 }
+
+export type McpOperationContext = {
+  source: "oauth" | "bearer" | "stdio" | "file" | "environment";
+  clientId?: string;
+  clientName?: string;
+  label?: string;
+};
 
 export type ChecklistInput = {
   id?: string;
@@ -146,6 +154,22 @@ export type GroupUpdateInput = Partial<GroupInput> & {
 
 function fail(message: string): never {
   throw new McpServiceError(message);
+}
+
+function createClientIdentity(context?: McpOperationContext): ClientIdentity | undefined {
+  if (!context) return undefined;
+  if (context.clientId && context.clientName) {
+    return { clientId: context.clientId, clientName: context.clientName, source: context.source };
+  }
+  if (context.label) {
+    return { clientId: "file-token", clientName: context.label, source: context.source };
+  }
+  const defaultName = context.source === "oauth" ? "OAuth Client" 
+    : context.source === "stdio" ? "Local stdio" 
+    : context.source === "file" ? "File Token"
+    : context.source === "environment" ? "Environment Token"
+    : "Bearer Token";
+  return { clientId: context.source, clientName: defaultName, source: context.source };
 }
 
 function clone<T>(value: T): T {
@@ -378,23 +402,25 @@ export async function getNoteRecord(noteId: string): Promise<Note> {
   return clone(note);
 }
 
-export async function createNoteRecord(input: NoteCreateInput = {}): Promise<Note> {
+export async function createNoteRecord(input: NoteCreateInput = {}, context?: McpOperationContext): Promise<Note> {
   return updateWorkspace((workspace) => {
     const patch = normalizeNotePatch(input, workspace);
-    const note = { ...createBaseNote(new Date(), (patch.title as string | undefined) ?? "Untitled note"), ...patch };
+    const createdBy = createClientIdentity(context);
+    const note = { ...createBaseNote(new Date(), (patch.title as string | undefined) ?? "Untitled note"), ...patch, ...(createdBy ? { createdBy, updatedBy: createdBy } : {}) };
     note.position = workspace.notes.length;
     return { ...workspace, notes: [...workspace.notes, note] };
   }).then((workspace) => clone(workspace.notes[workspace.notes.length - 1]));
 }
 
-export async function updateNoteRecord(noteId: string, input: NoteUpdateInput): Promise<Note> {
+export async function updateNoteRecord(noteId: string, input: NoteUpdateInput, context?: McpOperationContext): Promise<Note> {
   const id = textValue(noteId, "Note ID", 200);
   let updated: Note | undefined;
+  const updatedBy = createClientIdentity(context);
   const workspace = await updateWorkspace((current) => {
     const existing = current.notes.find((note) => note.id === id);
     if (!existing) fail("Note not found");
     const patch = normalizeNotePatch(input, current, existing);
-    updated = { ...existing, ...patch, updatedAt: new Date().toISOString() };
+    updated = { ...existing, ...patch, updatedAt: new Date().toISOString(), ...(updatedBy ? { updatedBy } : {}) };
     return { ...current, notes: current.notes.map((note) => note.id === id ? updated as Note : note) };
   });
   return clone(updated ?? workspace.notes.find((note) => note.id === id) as Note);

@@ -25,7 +25,7 @@ import {
   workspaceSummary,
 } from "@/lib/mcp-service";
 
-export type McpServerContext = Pick<McpAuthContext, "tokenId" | "tokenPrefix" | "scopes" | "source">;
+export type McpServerContext = Pick<McpAuthContext, "tokenId" | "tokenPrefix" | "scopes" | "source" | "clientId" | "clientName" | "label">;
 
 class McpPermissionError extends Error {
   constructor(scope: McpScope) {
@@ -212,14 +212,14 @@ export function createMcpServer(context: McpServerContext): McpServer {
     description: "Create a note. Attachment metadata is supported; binary uploads remain in the web upload flow.",
     inputSchema: noteInputSchema,
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
-  }, async (input: NoteToolInput) => execute(context, "notes:write", () => createNoteRecord(mapNoteInput(input))));
+  }, async (input: NoteToolInput) => execute(context, "notes:write", () => createNoteRecord(mapNoteInput(input), { source: context.source, clientId: context.clientId, clientName: context.clientName, label: context.label })));
 
   server.registerTool("update_note", {
     title: "Update note",
     description: "Update selected fields on an existing note. Omitted fields are preserved.",
     inputSchema: updateNoteInputSchema,
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
-  }, async (input: UpdateNoteToolInput) => execute(context, "notes:write", () => updateNoteRecord(input.note_id, mapNoteInput(input))));
+  }, async (input: UpdateNoteToolInput) => execute(context, "notes:write", () => updateNoteRecord(input.note_id, mapNoteInput(input), { source: context.source, clientId: context.clientId, clientName: context.clientName, label: context.label })));
 
   server.registerTool("delete_note", {
     title: "Delete note",

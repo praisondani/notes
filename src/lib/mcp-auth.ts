@@ -23,6 +23,9 @@ export type McpAuthContext = {
   scopes: ReadonlySet<McpScope>;
   source: "environment" | "file" | "oauth" | "stdio";
   userId?: string;
+  clientId?: string;
+  clientName?: string;
+  label?: string;
 };
 
 export type McpAuthFailure = {
@@ -116,6 +119,8 @@ export async function authenticateMcpRequest(request: Request): Promise<McpAuthR
           scopes: new Set(oauthContext.scopes),
           source: "oauth",
           userId: oauthContext.userId,
+          clientId: oauthContext.clientId,
+          clientName: oauthContext.clientName,
         },
       };
     }
@@ -141,6 +146,7 @@ export async function authenticateMcpRequest(request: Request): Promise<McpAuthR
           tokenPrefix: token.tokenPrefix,
           scopes: new Set(token.scopes),
           source: "file",
+          label: token.label,
         };
       }
     }

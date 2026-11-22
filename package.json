@@ -1,6 +1,6 @@
 {
   "name": "notes",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "private": false,
   "description": "A minimal, self-hostable private note workspace.",
   "license": "MIT",
@@ -24,7 +24,7 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.856.0",
     "@aws-sdk/s3-request-presigner": "^3.856.0",
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "@radix-ui/react-dialog": "^1.1.14",
     "@radix-ui/react-dropdown-menu": "^2.1.15",
     "@radix-ui/react-scroll-area": "^1.2.9",
@@ -34,7 +34,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^0.468.0",
-    "next": "^16.3.1",
+    "next": "^16.4.6",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "server-only": "^0.0.1",
@@ -51,17 +51,19 @@
     "@types/react": "^19.1.10",
     "@types/react-dom": "^19.1.7",
     "@vitejs/plugin-react": "^5.0.4",
-    "eslint": "^10.12.0",
-    "eslint-config-next": "^16.3.1",
+    "braces": "file:vendor/braces",
+    "eslint": "^10.15.0",
+    "eslint-config-next": "^16.4.6",
     "jsdom": "^26.1.0",
     "tailwindcss": "^4.3.3",
     "tsx": "4.23.12",
     "typescript": "^5.9.2",
-    "vitest": "^4.1.11",
-    "braces": "file:vendor/braces"
+    "vitest": "^4.1.11"
   },
   "overrides": {
     "body-parser": "2.4.0",
-    "@hono/node-server": "2.1.5"
+    "@hono/node-server": "2.1.11",
+    "hono": "4.13.19",
+    "minimatch": "11.0.9"
   }
 }

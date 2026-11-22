@@ -6,6 +6,9 @@ const nextConfig: NextConfig = {
   poweredByHeader: false,
   typedRoutes: true,
   turbopack: { root: process.cwd() },
+  experimental: {
+    agentUpgrade: "security",
+  },
 };
 
 export default nextConfig;

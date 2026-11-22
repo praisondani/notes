@@ -1,7 +1,7 @@
 "use client";
 /* eslint-disable @next/next/no-img-element */
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ChangeEvent, type FormEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ChangeEvent, type ClipboardEvent, type DragEvent, type FormEvent } from "react";
 import Link from "next/link";
 import {
   Archive,
@@ -719,45 +719,59 @@ export function NotesApp() {
     }
   }
 
-  async function handleImagePaste(event: React.ClipboardEvent<HTMLTextAreaElement>) {
+  async function insertUploadedImage(file: File, cursorPos?: number) {
     if (!selectedNote) return;
-    const items = Array.from(event.clipboardData.items);
-    const imageItem = items.find((item) => item.type.startsWith("image/"));
-    if (!imageItem) return;
-    
-    event.preventDefault();
-    const file = imageItem.getAsFile();
-    if (!file) return;
-    
     const formData = new FormData();
     formData.append("file", file);
-    
     try {
       const response = await fetch("/api/attachments", { method: "POST", body: formData });
       if (!response.ok) throw new Error("Image upload failed");
       const stored = await response.json() as { key: string; url: string; mimeType: string; size: number };
-      
       const textarea = contentEditorRef.current;
-      if (!textarea) return;
-      
-      const cursorPos = textarea.selectionStart;
-      const beforeText = selectedNote.content.substring(0, cursorPos);
-      const afterText = selectedNote.content.substring(cursorPos);
-      const imageMarkdown = `\n![Image](${stored.url})\n`;
-      const newContent = beforeText + imageMarkdown + afterText;
-      
-      updateSelectedNote({ content: newContent });
-      
+      const insertionPoint = cursorPos ?? textarea?.selectionStart ?? selectedNote.content.length;
+      const beforeText = selectedNote.content.substring(0, insertionPoint);
+      const afterText = selectedNote.content.substring(insertionPoint);
+      const imageMarkdown = `\n![${file.name || "Image"}](${stored.url})\n`;
+      updateSelectedNote({
+        content: beforeText + imageMarkdown + afterText,
+        attachments: [...selectedNote.attachments, {
+          id: createId("attachment"),
+          kind: "image",
+          name: file.name || "Image",
+          url: stored.url,
+          mimeType: stored.mimeType,
+          size: stored.size,
+          objectKey: stored.key,
+        }],
+      });
       setTimeout(() => {
-        if (textarea) {
-          const newPos = cursorPos + imageMarkdown.length;
-          textarea.setSelectionRange(newPos, newPos);
-          textarea.focus();
-        }
+        if (!textarea) return;
+        const newPos = insertionPoint + imageMarkdown.length;
+        textarea.setSelectionRange(newPos, newPos);
+        textarea.focus();
+        resizeNoteContent(textarea);
       }, 0);
     } catch {
       setSaveState("error");
     }
+  }
+
+  async function handleImagePaste(event: ClipboardEvent<HTMLTextAreaElement>) {
+    if (!selectedNote) return;
+    const imageItem = Array.from(event.clipboardData.items).find((item) => item.type.startsWith("image/"));
+    if (!imageItem) return;
+    event.preventDefault();
+    const file = imageItem.getAsFile();
+    if (!file) return;
+    await insertUploadedImage(file, event.currentTarget.selectionStart);
+  }
+
+  async function handleContentDrop(event: DragEvent<HTMLTextAreaElement>) {
+    if (!selectedNote) return;
+    const file = event.dataTransfer.files?.[0];
+    if (!file || !file.type.startsWith("image/")) return;
+    event.preventDefault();
+    await insertUploadedImage(file, event.currentTarget.selectionStart);
   }
 
   function addLink(event: FormEvent<HTMLFormElement>) {
@@ -1004,7 +1018,22 @@ export function NotesApp() {
                     )}
                   </div>
                 ) : (
-                  <Textarea ref={contentEditorRef} value={selectedNote.content} onChange={(event) => updateSelectedNote({ content: event.target.value })} onInput={(event) => resizeNoteContent(event.currentTarget)} onPaste={handleImagePaste} onBlur={finalizeSelectedNote} placeholder="Start writing… (paste images directly)" aria-label="Note content" className="content-editor" style={{ overflowY: "hidden" }} />
+                  <Textarea
+                    ref={contentEditorRef}
+                    value={selectedNote.content}
+                    onChange={(event) => updateSelectedNote({ content: event.target.value })}
+                    onInput={(event) => resizeNoteContent(event.currentTarget)}
+                    onPaste={handleImagePaste}
+                    onDragOver={(event) => {
+                      if (Array.from(event.dataTransfer.types).includes("Files")) event.preventDefault();
+                    }}
+                    onDrop={handleContentDrop}
+                    onBlur={finalizeSelectedNote}
+                    placeholder="Start writing… (paste or drop images)"
+                    aria-label="Note content"
+                    className="content-editor"
+                    style={{ overflowY: "hidden" }}
+                  />
                 )}
 
                 <section className="editor-section" aria-labelledby="checklist-heading">

@@ -2,6 +2,14 @@
 
 All notable changes are documented here.
 
+## [0.6.3] - 2026-11-22
+
+### Added
+
+- Markdown editing with a sanitized preview toggle for headings, lists, code, tables, links, images, and task checkboxes.
+- Paste or drop images into the note body; uploads insert Markdown image syntax and attachment metadata.
+- MCP tools `upload_image` and `upload_file` for URL or base64 payloads with MIME allowlists and a 25 MB size limit.
+
 ## [0.6.2] - 2026-11-22
 
 ### Fixed

@@ -1,4 +1,5 @@
 import { createId, createNote as createBaseNote, getNotePreview, noteMatchesSearch } from "@/lib/notes";
+import { storeBytes } from "@/lib/storage";
 import { loadWorkspace, updateWorkspace } from "@/lib/workspace-store";
 import type {
   Attachment,
@@ -464,60 +465,183 @@ export async function removeNoteAttachmentRecord(noteId: string, attachmentId: s
   return clone(updated ?? workspace.notes.find((note) => note.id === id) as Note);
 }
 
-export type UploadImageInput = {
+const ALLOWED_UPLOAD_MIME_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/jpg",
+  "image/gif",
+  "image/webp",
+  "application/pdf",
+  "text/plain",
+  "text/markdown",
+  "application/json",
+]);
+
+const MIME_EXTENSION: Record<string, string> = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/jpg": "jpg",
+  "image/gif": "gif",
+  "image/webp": "webp",
+  "application/pdf": "pdf",
+  "text/plain": "txt",
+  "text/markdown": "md",
+  "application/json": "json",
+};
+
+export type UploadNoteFileInput = {
   noteId: string;
   source: "url" | "base64";
   data: string;
   filename?: string;
   mimeType?: string;
+  addAttachment?: boolean;
+  appendMarkdown?: boolean;
 };
 
-export async function uploadImageToNote(input: UploadImageInput): Promise<{ url: string; markdown: string }> {
+export type UploadNoteFileResult = {
+  url: string;
+  markdown: string;
+  kind: AttachmentKind;
+  mimeType?: string;
+  size?: number;
+  objectKey?: string;
+  attachmentId?: string;
+  note?: Note;
+};
+
+function isImageMimeType(mimeType: string): boolean {
+  return mimeType.startsWith("image/");
+}
+
+function normalizeUploadMimeType(value: string | undefined): string {
+  const mimeType = (value ?? "").trim().toLowerCase();
+  if (!mimeType || !ALLOWED_UPLOAD_MIME_TYPES.has(mimeType)) {
+    fail(`Unsupported file type. Allowed types: ${[...ALLOWED_UPLOAD_MIME_TYPES].join(", ")}`);
+  }
+  return mimeType === "image/jpg" ? "image/jpeg" : mimeType;
+}
+
+function parseDataUrl(value: string): { mimeType: string; buffer: Buffer } {
+  const match = /^data:([a-z0-9.+/-]+);base64,([A-Za-z0-9+/=\s]+)$/i.exec(value.trim());
+  if (!match) fail("Invalid base64 data. Expected format: data:<mime>;base64,<data>");
+  const mimeType = normalizeUploadMimeType(match[1]);
+  const buffer = Buffer.from(match[2].replace(/\s+/g, ""), "base64");
+  if (!buffer.length) fail("Base64 payload is empty");
+  if (buffer.length > MAX_ATTACHMENT_SIZE) {
+    fail(`File size ${buffer.length} bytes exceeds maximum ${MAX_ATTACHMENT_SIZE} bytes`);
+  }
+  return { mimeType, buffer };
+}
+
+function markdownForUpload(kind: AttachmentKind, name: string, url: string): string {
+  return kind === "image" ? `![${name}](${url})` : `[${name}](${url})`;
+}
+
+export async function uploadNoteFile(input: UploadNoteFileInput, context?: McpOperationContext): Promise<UploadNoteFileResult> {
   const noteId = textValue(input.noteId, "Note ID", 200);
-  const note = (await loadWorkspace()).notes.find((n) => n.id === noteId);
-  if (!note) fail("Note not found");
+  const addAttachment = input.addAttachment !== false;
+  const appendMarkdown = input.appendMarkdown === true;
 
   if (input.source === "url") {
-    const url = textValue(input.data, "Image URL", 4_096).trim();
+    const url = textValue(input.data, "File URL", 4_096).trim();
     if (!url.startsWith("https://") && !url.startsWith("http://")) {
-      fail("Image URL must use http or https protocol");
+      fail("File URL must use http or https protocol");
     }
-    const filename = input.filename?.trim() || "image";
-    const markdown = `![${filename}](${url})`;
-    return { url, markdown };
+    const mimeType = input.mimeType ? normalizeUploadMimeType(input.mimeType) : undefined;
+    const kind: AttachmentKind = mimeType && isImageMimeType(mimeType) ? "image" : mimeType ? "file" : "link";
+    const name = textValue(input.filename?.trim() || (kind === "image" ? "Image" : "File"), "Filename", MAX_ATTACHMENT_NAME_LENGTH).trim();
+    const markdown = markdownForUpload(kind === "link" ? "file" : kind, name, url);
+    let note: Note | undefined;
+    let attachmentId: string | undefined;
+    if (addAttachment) {
+      note = await addNoteAttachmentRecord(noteId, {
+        kind,
+        name,
+        url,
+        ...(mimeType ? { mimeType } : {}),
+      });
+      attachmentId = note.attachments.at(-1)?.id;
+    } else if (!(await loadWorkspace()).notes.some((candidate) => candidate.id === noteId)) {
+      fail("Note not found");
+    }
+    if (appendMarkdown) {
+      note = await updateNoteRecord(noteId, { content: `${(note ?? await getNoteRecord(noteId)).content}${markdown.startsWith("\n") ? "" : "\n"}${markdown}\n` }, context);
+    }
+    return {
+      url,
+      markdown,
+      kind,
+      ...(mimeType ? { mimeType } : {}),
+      ...(attachmentId ? { attachmentId } : {}),
+      ...(note ? { note } : {}),
+    };
   }
 
+  if (input.source !== "base64") fail("Invalid source type. Must be 'url' or 'base64'");
+
+  const parsed = parseDataUrl(input.data);
+  const mimeType = input.mimeType ? normalizeUploadMimeType(input.mimeType) : parsed.mimeType;
+  if (input.mimeType && normalizeUploadMimeType(input.mimeType) !== parsed.mimeType) {
+    fail("mime_type must match the base64 data URL type");
+  }
+  const extension = MIME_EXTENSION[mimeType] ?? "bin";
+  const name = textValue(input.filename?.trim() || `upload.${extension}`, "Filename", MAX_ATTACHMENT_NAME_LENGTH).trim();
+  const stored = await storeBytes(name, mimeType, parsed.buffer);
+  const kind: AttachmentKind = isImageMimeType(mimeType) ? "image" : "file";
+  const markdown = markdownForUpload(kind, name, stored.url);
+  let note: Note | undefined;
+  let attachmentId: string | undefined;
+  if (addAttachment) {
+    note = await addNoteAttachmentRecord(noteId, {
+      kind,
+      name,
+      url: stored.url,
+      mimeType: stored.mimeType,
+      size: stored.size,
+      objectKey: stored.key,
+    });
+    attachmentId = note.attachments.at(-1)?.id;
+  } else if (!(await loadWorkspace()).notes.some((candidate) => candidate.id === noteId)) {
+    fail("Note not found");
+  }
+  if (appendMarkdown) {
+    const current = note ?? await getNoteRecord(noteId);
+    note = await updateNoteRecord(noteId, { content: `${current.content}${markdown.startsWith("\n") ? "" : "\n"}${markdown}\n` }, context);
+  }
+  return {
+    url: stored.url,
+    markdown,
+    kind,
+    mimeType: stored.mimeType,
+    size: stored.size,
+    objectKey: stored.key,
+    ...(attachmentId ? { attachmentId } : {}),
+    ...(note ? { note } : {}),
+  };
+}
+
+/** @deprecated Prefer uploadNoteFile; kept for MCP tool compatibility. */
+export async function uploadImageToNote(input: {
+  noteId: string;
+  source: "url" | "base64";
+  data: string;
+  filename?: string;
+  mimeType?: string;
+}, context?: McpOperationContext): Promise<{ url: string; markdown: string }> {
   if (input.source === "base64") {
-    const base64Match = /^data:image\/(png|jpeg|jpg|gif|webp);base64,(.+)$/.exec(input.data.trim());
-    if (!base64Match) fail("Invalid base64 image data. Expected format: data:image/[type];base64,[data]");
-    
-    const [, imageType, base64Data] = base64Match;
-    const mimeType = `image/${imageType}`;
-    const buffer = Buffer.from(base64Data, "base64");
-    
-    if (buffer.length > MAX_ATTACHMENT_SIZE) {
-      fail(`Image size ${buffer.length} bytes exceeds maximum ${MAX_ATTACHMENT_SIZE} bytes`);
-    }
-    
-    const blob = new Blob([buffer], { type: mimeType });
-    const file = new File([blob], input.filename?.trim() || `image.${imageType}`, { type: mimeType });
-    
-    const formData = new FormData();
-    formData.append("file", file);
-    
-    try {
-      const uploadOrigin = process.env.APP_URL?.trim() || "http://localhost:3000";
-      const response = await fetch(`${uploadOrigin}/api/attachments`, { method: "POST", body: formData });
-      if (!response.ok) throw new Error("Image upload failed");
-      const stored = await response.json() as { key: string; url: string; mimeType: string; size: number };
-      const markdown = `![${input.filename?.trim() || "Image"}](${stored.url})`;
-      return { url: stored.url, markdown };
-    } catch (error) {
-      fail(`Image upload failed: ${error instanceof Error ? error.message : "Unknown error"}`);
-    }
+    const match = /^data:image\//i.exec(input.data.trim());
+    if (!match) fail("Invalid base64 image data. Expected format: data:image/[type];base64,[data]");
+  } else if (input.mimeType && !isImageMimeType(normalizeUploadMimeType(input.mimeType))) {
+    fail("upload_image only accepts image MIME types");
   }
-
-  fail("Invalid source type. Must be 'url' or 'base64'");
+  const result = await uploadNoteFile({
+    ...input,
+    mimeType: input.mimeType ?? (input.source === "url" ? "image/png" : undefined),
+    addAttachment: true,
+    appendMarkdown: false,
+  }, context);
+  return { url: result.url, markdown: result.markdown };
 }
 
 function tokenize(value: string): string[] {

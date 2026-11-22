@@ -31,23 +31,28 @@ function safeKey(name: string): string {
   return `${Date.now()}-${crypto.randomUUID()}-${base}`;
 }
 
-export async function storeObject(file: File): Promise<StoredObject> {
-  const key = safeKey(file.name);
-  const buffer = Buffer.from(await file.arrayBuffer());
+export async function storeBytes(name: string, mimeType: string, body: Buffer | Uint8Array): Promise<StoredObject> {
+  const key = safeKey(name);
+  const buffer = Buffer.isBuffer(body) ? body : Buffer.from(body);
+  const contentType = mimeType || "application/octet-stream";
   const config = s3Config();
 
   if (config) {
     const client = new S3Client({ endpoint: config.endpoint, region: config.region, forcePathStyle: true, credentials: { accessKeyId: config.accessKeyId, secretAccessKey: config.secretAccessKey } });
-    await client.send(new PutObjectCommand({ Bucket: config.bucket, Key: key, Body: buffer, ContentType: file.type || "application/octet-stream" }));
+    await client.send(new PutObjectCommand({ Bucket: config.bucket, Key: key, Body: buffer, ContentType: contentType }));
     const publicRoot = process.env.S3_PUBLIC_URL?.trim();
     const url = publicRoot ? `${publicRoot.replace(/\/$/, "")}/${encodeURIComponent(key)}` : await getSignedUrl(client, new GetObjectCommand({ Bucket: config.bucket, Key: key }), { expiresIn: 60 * 60 * 24 * 7 });
-    return { key, url, mimeType: file.type || "application/octet-stream", size: file.size };
+    return { key, url, mimeType: contentType, size: buffer.length };
   }
 
   const filename = localUploadPath(key);
   await mkdir(path.dirname(filename), { recursive: true });
   await writeFile(filename, buffer);
-  return { key, url: `/api/uploads/${encodeURIComponent(key)}`, mimeType: file.type || "application/octet-stream", size: file.size };
+  return { key, url: `/api/uploads/${encodeURIComponent(key)}`, mimeType: contentType, size: buffer.length };
+}
+
+export async function storeObject(file: File): Promise<StoredObject> {
+  return storeBytes(file.name, file.type || "application/octet-stream", Buffer.from(await file.arrayBuffer()));
 }
 
 export async function readLocalObject(key: string): Promise<Buffer> {

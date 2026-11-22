@@ -16,6 +16,12 @@ export type ChecklistItem = {
   completed: boolean;
 };
 
+export type ClientIdentity = {
+  clientId: string;
+  clientName: string;
+  source: "oauth" | "bearer" | "stdio" | "file" | "environment";
+};
+
 export type Note = {
   id: string;
   title: string;
@@ -30,6 +36,8 @@ export type Note = {
   createdAt: string;
   updatedAt: string;
   position: number;
+  createdBy?: ClientIdentity;
+  updatedBy?: ClientIdentity;
 };
 
 export type Folder = {

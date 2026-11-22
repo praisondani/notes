@@ -2,6 +2,18 @@
 
 All notable changes are documented here.
 
+## [0.6.2] - 2026-11-22
+
+### Fixed
+
+- Default OAuth scopes and WWW-Authenticate now advertise `notes:read` and `notes:write`, so agents that omit `scope` get write access when the owner consents.
+- Notes created or updated through MCP record optional `createdBy` / `updatedBy` client attribution.
+
+### Security
+
+- Upgrade Next.js to 16.4.6.
+- Raise `@hono/node-server`, `hono`, `eslint`, and `minimatch` overrides/dependencies so `npm audit --audit-level=low` is clean.
+
 ## [0.6.1] - 2026-10-29
 
 ### Security

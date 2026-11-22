@@ -22,6 +22,8 @@ import {
   updateFolderRecord,
   updateGroupRecord,
   updateNoteRecord,
+  uploadImageToNote,
+  uploadNoteFile,
   workspaceSummary,
 } from "@/lib/mcp-service";
 
@@ -108,6 +110,22 @@ const getNoteInputSchema = z.object({ note_id: identifier });
 const deleteNoteInputSchema = z.object({ note_id: identifier });
 const attachmentInputSchema = z.object({ note_id: identifier, attachment: attachmentSchema });
 const removeAttachmentInputSchema = z.object({ note_id: identifier, attachment_id: identifier });
+const uploadImageInputSchema = z.object({
+  note_id: identifier,
+  source: z.enum(["url", "base64"]),
+  data: z.string().min(1).max(10 * 1024 * 1024),
+  filename: z.string().max(200).optional(),
+  mime_type: z.string().max(150).optional(),
+});
+const uploadFileInputSchema = z.object({
+  note_id: identifier,
+  source: z.enum(["url", "base64"]),
+  data: z.string().min(1).max(10 * 1024 * 1024),
+  filename: z.string().max(200).optional(),
+  mime_type: z.string().max(150).optional(),
+  add_attachment: z.boolean().optional(),
+  append_markdown: z.boolean().optional(),
+});
 
 type NoteToolInput = z.infer<typeof noteInputSchema>;
 type UpdateNoteToolInput = z.infer<typeof updateNoteInputSchema>;
@@ -175,7 +193,7 @@ function mapGroupInput(input: GroupInput) {
 }
 
 export function createMcpServer(context: McpServerContext): McpServer {
-  const server = new McpServer({ name: "notes", version: "0.6.2" });
+  const server = new McpServer({ name: "notes", version: "0.6.3" });
 
   server.registerTool("workspace_summary", {
     title: "Workspace summary",
@@ -241,6 +259,43 @@ export function createMcpServer(context: McpServerContext): McpServer {
     inputSchema: removeAttachmentInputSchema,
     annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
   }, async (input: { note_id: string; attachment_id: string }) => execute(context, "notes:write", () => removeNoteAttachmentRecord(input.note_id, input.attachment_id)));
+
+  server.registerTool("upload_image", {
+    title: "Upload image to note",
+    description: "Add an image to a note from a URL or base64 data URL (PNG/JPEG/GIF/WEBP, max 25MB). Base64 payloads are stored via the same object-storage path as the web UI. Returns markdown image syntax; also adds attachment metadata by default.",
+    inputSchema: uploadImageInputSchema,
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+  }, async (input: { note_id: string; source: "url" | "base64"; data: string; filename?: string; mime_type?: string }) =>
+    execute(context, "notes:write", () => uploadImageToNote({
+      noteId: input.note_id,
+      source: input.source,
+      data: input.data,
+      filename: input.filename,
+      mimeType: input.mime_type,
+    }, { source: context.source, clientId: context.clientId, clientName: context.clientName, label: context.label })));
+
+  server.registerTool("upload_file", {
+    title: "Upload file to note",
+    description: "Add an image or file to a note from a URL or base64 data URL. Allowed types: image/png, image/jpeg, image/gif, image/webp, application/pdf, text/plain, text/markdown, application/json (max 25MB). Base64 uploads go through object storage. Returns markdown and optional attachment metadata. Set append_markdown=true to append the markdown into the note body.",
+    inputSchema: uploadFileInputSchema,
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+  }, async (input: {
+    note_id: string;
+    source: "url" | "base64";
+    data: string;
+    filename?: string;
+    mime_type?: string;
+    add_attachment?: boolean;
+    append_markdown?: boolean;
+  }) => execute(context, "notes:write", () => uploadNoteFile({
+    noteId: input.note_id,
+    source: input.source,
+    data: input.data,
+    filename: input.filename,
+    mimeType: input.mime_type,
+    addAttachment: input.add_attachment,
+    appendMarkdown: input.append_markdown,
+  }, { source: context.source, clientId: context.clientId, clientName: context.clientName, label: context.label })));
 
   server.registerTool("search_notes", {
     title: "Search notes",

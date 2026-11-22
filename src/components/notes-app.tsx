@@ -1,7 +1,7 @@
 "use client";
 /* eslint-disable @next/next/no-img-element */
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ChangeEvent, type FormEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ChangeEvent, type ClipboardEvent, type DragEvent, type FormEvent } from "react";
 import Link from "next/link";
 import {
   Archive,
@@ -10,6 +10,7 @@ import {
   ChevronDown,
   ChevronUp,
   Command as CommandIcon,
+  Eye,
   File,
   FilePlus2,
   Folder as FolderIcon,
@@ -27,6 +28,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Paperclip,
+  Pencil,
   Pin,
   PinOff,
   Plus,
@@ -46,6 +48,7 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { MarkdownRenderer } from "@/components/markdown-renderer";
 import { canMoveFolder, createId, createNote, filterNotes, getFolderPath, getNotePreview, isNoteEmpty, moveFolder, reorderChecklist, reorderNotes, toggleArchived, toggleChecklist, togglePinned, updateNote, withDerivedTitle } from "@/lib/notes";
 import type { Attachment, Folder as NoteFolder, Group, Note, NoteFilter, NoteQuery, Workspace } from "@/lib/types";
 import { applyTheme, readThemePreference, resolveDarkTheme, setThemePreference as saveThemePreference, type ThemePreference } from "@/lib/theme";
@@ -199,6 +202,7 @@ export function NotesApp() {
   const [themePreference, setThemePreferenceState] = useState<ThemePreference>(() => readThemePreference());
   const [darkMode, setDarkMode] = useState(() => resolveDarkTheme(readThemePreference()));
   const [hydrated, setHydrated] = useState(false);
+  const [markdownPreview, setMarkdownPreview] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const titleRef = useRef<HTMLInputElement>(null);
   const contentEditorRef = useRef<HTMLTextAreaElement>(null);
@@ -715,6 +719,61 @@ export function NotesApp() {
     }
   }
 
+  async function insertUploadedImage(file: File, cursorPos?: number) {
+    if (!selectedNote) return;
+    const formData = new FormData();
+    formData.append("file", file);
+    try {
+      const response = await fetch("/api/attachments", { method: "POST", body: formData });
+      if (!response.ok) throw new Error("Image upload failed");
+      const stored = await response.json() as { key: string; url: string; mimeType: string; size: number };
+      const textarea = contentEditorRef.current;
+      const insertionPoint = cursorPos ?? textarea?.selectionStart ?? selectedNote.content.length;
+      const beforeText = selectedNote.content.substring(0, insertionPoint);
+      const afterText = selectedNote.content.substring(insertionPoint);
+      const imageMarkdown = `\n![${file.name || "Image"}](${stored.url})\n`;
+      updateSelectedNote({
+        content: beforeText + imageMarkdown + afterText,
+        attachments: [...selectedNote.attachments, {
+          id: createId("attachment"),
+          kind: "image",
+          name: file.name || "Image",
+          url: stored.url,
+          mimeType: stored.mimeType,
+          size: stored.size,
+          objectKey: stored.key,
+        }],
+      });
+      setTimeout(() => {
+        if (!textarea) return;
+        const newPos = insertionPoint + imageMarkdown.length;
+        textarea.setSelectionRange(newPos, newPos);
+        textarea.focus();
+        resizeNoteContent(textarea);
+      }, 0);
+    } catch {
+      setSaveState("error");
+    }
+  }
+
+  async function handleImagePaste(event: ClipboardEvent<HTMLTextAreaElement>) {
+    if (!selectedNote) return;
+    const imageItem = Array.from(event.clipboardData.items).find((item) => item.type.startsWith("image/"));
+    if (!imageItem) return;
+    event.preventDefault();
+    const file = imageItem.getAsFile();
+    if (!file) return;
+    await insertUploadedImage(file, event.currentTarget.selectionStart);
+  }
+
+  async function handleContentDrop(event: DragEvent<HTMLTextAreaElement>) {
+    if (!selectedNote) return;
+    const file = event.dataTransfer.files?.[0];
+    if (!file || !file.type.startsWith("image/")) return;
+    event.preventDefault();
+    await insertUploadedImage(file, event.currentTarget.selectionStart);
+  }
+
   function addLink(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selectedNoteId || !linkUrl.trim()) return;
@@ -936,6 +995,7 @@ export function NotesApp() {
             <div className="editor-header">
               <div className="editor-meta"><Button variant="ghost" size="icon-sm" className="mobile-only" aria-label="Back to notes" onClick={() => { leaveSelectedNote(null); setMobilePane("list"); }}><ArrowLeft className="h-4 w-4" /></Button>{renderBreadcrumbs(selectedNote?.folderId ?? null, selectedNote?.groupId ?? null, selectedNote?.archived ? "archived" : "inbox", "editor")}{saveState === "saving" && <span>Saving…</span>}{saveState === "saved" && <span>Saved</span>}{saveState === "error" && <span className="text-destructive">Save error</span>}</div>
               <div className="toolbar-actions">
+                {selectedNote && <Tooltip><TooltipTrigger asChild><Button variant="ghost" size="icon-sm" aria-label={markdownPreview ? "Edit" : "Preview"} onClick={() => setMarkdownPreview(!markdownPreview)}>{markdownPreview ? <Pencil className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</Button></TooltipTrigger><TooltipContent>{markdownPreview ? "Edit" : "Preview"}</TooltipContent></Tooltip>}
                 {selectedNote && <Tooltip><TooltipTrigger asChild><Button variant="ghost" size="icon-sm" aria-label={selectedNote.pinned ? "Unpin note" : "Pin note"} onClick={() => setWorkspace((current) => ({ ...current, notes: togglePinned(current.notes, selectedNote.id) }))}>{selectedNote.pinned ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}</Button></TooltipTrigger><TooltipContent>{selectedNote.pinned ? "Unpin note" : "Pin note"}</TooltipContent></Tooltip>}
                 {selectedNote && <Tooltip><TooltipTrigger asChild><Button variant="ghost" size="icon-sm" aria-label={selectedNote.archived ? "Restore note" : "Archive note"} onClick={() => setWorkspace((current) => ({ ...current, notes: toggleArchived(current.notes, selectedNote.id) }))}>{selectedNote.archived ? <ArchiveRestore className="h-4 w-4" /> : <Archive className="h-4 w-4" />}</Button></TooltipTrigger><TooltipContent>{selectedNote.archived ? "Restore note" : "Archive note"}</TooltipContent></Tooltip>}
                 {selectedNote && <Tooltip><TooltipTrigger asChild><Button variant="ghost" size="icon-sm" aria-label="Delete note" onClick={deleteSelectedNote}><Trash2 className="h-4 w-4" /></Button></TooltipTrigger><TooltipContent>Delete note</TooltipContent></Tooltip>}
@@ -949,7 +1009,32 @@ export function NotesApp() {
                   <select className="folder-select" aria-label="Move note to folder" value={selectedNote.folderId ?? "inbox"} onChange={(event) => moveSelected(event.target.value === "inbox" ? null : event.target.value)}><option value="inbox">Inbox</option>{workspace.folders.map((folder) => <option value={folder.id} key={folder.id}>{folder.name}</option>)}</select>
                   <select className="folder-select" aria-label="Assign note to group" value={selectedNote.groupId ?? "none"} onChange={(event) => moveSelectedToGroup(event.target.value === "none" ? null : event.target.value)}><option value="none">No group</option>{workspace.groups.map((group) => <option value={group.id} key={group.id}>{group.name}</option>)}</select>
                 </div>
-                <Textarea ref={contentEditorRef} value={selectedNote.content} onChange={(event) => updateSelectedNote({ content: event.target.value })} onInput={(event) => resizeNoteContent(event.currentTarget)} onBlur={finalizeSelectedNote} placeholder="Start writing…" aria-label="Note content" className="content-editor" style={{ overflowY: "hidden" }} />
+                {markdownPreview ? (
+                  <div className="content-editor" style={{ minHeight: "200px", padding: "12px" }}>
+                    {selectedNote.content.trim() ? (
+                      <MarkdownRenderer content={selectedNote.content} className="markdown-content" />
+                    ) : (
+                      <p className="text-muted-foreground">No content to preview</p>
+                    )}
+                  </div>
+                ) : (
+                  <Textarea
+                    ref={contentEditorRef}
+                    value={selectedNote.content}
+                    onChange={(event) => updateSelectedNote({ content: event.target.value })}
+                    onInput={(event) => resizeNoteContent(event.currentTarget)}
+                    onPaste={handleImagePaste}
+                    onDragOver={(event) => {
+                      if (Array.from(event.dataTransfer.types).includes("Files")) event.preventDefault();
+                    }}
+                    onDrop={handleContentDrop}
+                    onBlur={finalizeSelectedNote}
+                    placeholder="Start writing… (paste or drop images)"
+                    aria-label="Note content"
+                    className="content-editor"
+                    style={{ overflowY: "hidden" }}
+                  />
+                )}
 
                 <section className="editor-section" aria-labelledby="checklist-heading">
                   <div className="editor-section-heading"><span id="checklist-heading"><ListChecks className="mr-1 inline h-3.5 w-3.5" />Checklist</span><Button variant="ghost" size="sm" onClick={addChecklistItem}><Plus className="h-3.5 w-3.5" />Add item</Button></div>

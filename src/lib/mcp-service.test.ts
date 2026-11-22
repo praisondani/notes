@@ -16,6 +16,7 @@ import {
   ragQuery,
   searchNotes,
   updateNoteRecord,
+  uploadNoteFile,
 } from "@/lib/mcp-service";
 
 let dataDirectory = "";
@@ -120,5 +121,41 @@ describe("MCP note service", () => {
     expect(snapshot.notes.find((note) => note.id === directNote.id)?.groupId).toBeNull();
     expect(snapshot.notes.find((note) => note.id === folderNote.id)?.folderId).toBe(projects.id);
     expect(snapshot.notes.find((note) => note.id === folderNote.id)?.groupId).toBeNull();
+  });
+
+  it("uploads base64 images into storage and attaches them to the note", async () => {
+    const note = await createNoteRecord({ title: "With image", content: "Body" });
+    const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+    const uploaded = await uploadNoteFile({
+      noteId: note.id,
+      source: "base64",
+      data: png,
+      filename: "pixel.png",
+      appendMarkdown: true,
+    });
+
+    expect(uploaded.kind).toBe("image");
+    expect(uploaded.markdown).toContain("![pixel.png](");
+    expect(uploaded.url).toMatch(/^\/api\/uploads\//);
+    expect(uploaded.objectKey).toBeTruthy();
+    const updated = await getNoteRecord(note.id);
+    expect(updated.attachments).toHaveLength(1);
+    expect(updated.attachments[0]?.name).toBe("pixel.png");
+    expect(updated.content).toContain(uploaded.markdown);
+  });
+
+  it("rejects unsupported MIME types and oversized payloads", async () => {
+    const note = await createNoteRecord({ title: "Guards" });
+    await expect(uploadNoteFile({
+      noteId: note.id,
+      source: "base64",
+      data: "data:application/x-msdownload;base64,AAAA",
+    })).rejects.toThrow("Unsupported file type");
+
+    await expect(uploadNoteFile({
+      noteId: note.id,
+      source: "url",
+      data: "ftp://example.com/file.pdf",
+    })).rejects.toThrow("http or https");
   });
 });

@@ -1,6 +1,8 @@
 services:
   notes:
-    build: .
+    build:
+      context: .
+      network: ${NOTES_BUILD_NETWORK:-default}
     image: notes:node22.23.5-npm-free-20261118
     pull_policy: never
     restart: unless-stopped

@@ -1,14 +1,28 @@
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import path from "node:path";
-import { MCP_SCOPES, normalizeMcpScopes, type McpScope } from "@/lib/mcp-scopes";
+import { DEFAULT_MCP_SCOPES, MCP_SCOPES, normalizeMcpScopes, uniqueMcpScopes, type McpScope } from "@/lib/mcp-scopes";
 
 const STORE_VERSION = 1;
 const AUTHORIZATION_CODE_TTL_MS = 5 * 60 * 1_000;
 const AUTHORIZATION_REQUEST_TTL_MS = 10 * 60 * 1_000;
-const ACCESS_TOKEN_TTL_SECONDS = 60 * 60;
-const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1_000;
+const DEFAULT_ACCESS_TOKEN_TTL_SECONDS = 60 * 60;
+const DEFAULT_REFRESH_TOKEN_TTL_DAYS = 180;
 const MAX_REDIRECT_URIS = 10;
+
+function readPositiveInt(value: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(value ?? "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+export function accessTokenTtlSeconds(): number {
+  return readPositiveInt(process.env.MCP_OAUTH_ACCESS_TOKEN_TTL_SECONDS, DEFAULT_ACCESS_TOKEN_TTL_SECONDS);
+}
+
+export function refreshTokenTtlMs(): number {
+  const days = readPositiveInt(process.env.MCP_OAUTH_REFRESH_TOKEN_TTL_DAYS, DEFAULT_REFRESH_TOKEN_TTL_DAYS);
+  return days * 24 * 60 * 60 * 1_000;
+}
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 const TOKEN_ENDPOINT_AUTH_METHODS = ["none", "client_secret_post", "client_secret_basic"] as const;
 
@@ -88,6 +102,9 @@ type OAuthStore = {
   accessTokens: StoredAccessToken[];
   refreshTokens: StoredRefreshToken[];
   authorizationRequests: StoredAuthorizationRequest[];
+  migrations?: {
+    refreshScopesHealedAt?: string;
+  };
 };
 
 export type OAuthClient = {
@@ -161,6 +178,9 @@ export type OAuthAccessContext = {
 
 export type OAuthClientView = OAuthClient & {
   activeTokenCount: number;
+  grantedScopes: McpScope[];
+  accessTokenExpiresAt: string | null;
+  refreshTokenExpiresAt: string | null;
 };
 
 export class OAuthProtocolError extends Error {
@@ -209,6 +229,12 @@ async function readStore(): Promise<OAuthStore> {
   }
 }
 
+async function readStoreForMutation(): Promise<OAuthStore> {
+  const store = await readStore();
+  healRefreshTokenScopes(store);
+  return store;
+}
+
 async function writeStore(store: OAuthStore): Promise<void> {
   const directory = dataDirectory();
   const filename = storePath();
@@ -224,7 +250,7 @@ let queuedMutation: Promise<unknown> = Promise.resolve();
 
 function withMutation<T>(operation: (store: OAuthStore) => Promise<T> | T): Promise<T> {
   const next = queuedMutation.then(async () => {
-    const store = await readStore();
+    const store = await readStoreForMutation();
     const result = await operation(store);
     await writeStore(store);
     return result;
@@ -408,12 +434,48 @@ function findClient(store: OAuthStore, clientId: string): StoredOAuthClient {
   return client;
 }
 
-function ensureRequestedScopes(requested: McpScope[] | undefined, allowed: McpScope[] | undefined): McpScope[] {
-  const scopes = normalizeMcpScopes(requested, ["notes:read"]);
+function ensureRequestedScopes(requested: McpScope[] | undefined, allowed: McpScope[] | undefined, fallback: McpScope[] = DEFAULT_MCP_SCOPES): McpScope[] {
+  const scopes = normalizeMcpScopes(requested, fallback);
   if (allowed && scopes.some((scope) => !allowed.includes(scope))) {
     throw new OAuthProtocolError("invalid_scope", "The requested MCP scope is not allowed for this client.");
   }
   return scopes;
+}
+
+function historicalScopesForClient(store: OAuthStore, clientId: string, resource: string): McpScope[] {
+  const scopes: McpScope[] = [];
+  for (const token of store.accessTokens) {
+    if (token.clientId === clientId && token.resource === resource) scopes.push(...token.scopes);
+  }
+  for (const token of store.refreshTokens) {
+    if (token.clientId === clientId && token.resource === resource) scopes.push(...token.scopes);
+  }
+  return uniqueMcpScopes(scopes);
+}
+
+function resolveRefreshScopes(current: StoredRefreshToken, requested: McpScope[] | undefined): McpScope[] {
+  const granted = uniqueMcpScopes(current.scopes);
+  if (!granted.length) throw new OAuthProtocolError("invalid_scope", "The refresh token has no usable scopes.");
+  // RFC 6749 §6: omitted scope means the originally granted scope.
+  if (requested === undefined) return granted;
+  return ensureRequestedScopes(requested, granted, granted);
+}
+
+function healRefreshTokenScopes(store: OAuthStore): boolean {
+  if (store.migrations?.refreshScopesHealedAt) return false;
+  for (const refresh of store.refreshTokens) {
+    if (refresh.revokedAt) continue;
+    const historical = historicalScopesForClient(store, refresh.clientId, refresh.resource);
+    const healed = uniqueMcpScopes([...refresh.scopes, ...historical]);
+    if (healed.join(" ") !== refresh.scopes.join(" ")) {
+      console.info(
+        `[mcp-oauth] healed refresh scopes client=${refresh.clientId} from=${refresh.scopes.join(" ")} to=${healed.join(" ")}`,
+      );
+      refresh.scopes = healed;
+    }
+  }
+  store.migrations = { ...store.migrations, refreshScopesHealedAt: nowIso() };
+  return true;
 }
 
 export async function registerOAuthClient(input: OAuthClientRegistrationInput): Promise<OAuthRegistrationResult> {
@@ -462,7 +524,7 @@ export async function beginAuthorizationRequest(input: OAuthAuthorizationRequest
   }
   const resource = normalizeResource(input.resource);
   if (resource !== mcpResourceUrl()) throw new OAuthProtocolError("invalid_request", "The MCP resource is invalid.");
-  const scopes = ensureRequestedScopes(input.scopes, client.scopes);
+  const scopes = ensureRequestedScopes(input.scopes, client.scopes, client.scopes ?? DEFAULT_MCP_SCOPES);
   const codeChallenge = validateCodeChallenge(input.codeChallenge);
   if (input.state && input.state.length > 2_048) throw new OAuthProtocolError("invalid_request", "state is too long.");
   const transactionId = randomValue("notes_tx_");
@@ -527,13 +589,21 @@ export async function approveAuthorizationRequest(transactionId: string, browser
   });
 }
 
-function issueTokenSet(store: OAuthStore, clientId: string, userId: string, scopes: McpScope[], resource: string): OAuthTokenSet {
+function issueTokenSet(
+  store: OAuthStore,
+  clientId: string,
+  userId: string,
+  scopes: McpScope[],
+  resource: string,
+  familyId = randomValue("notes_family_"),
+): OAuthTokenSet {
   const accessToken = randomValue("cnd_oauth_");
   const refreshToken = randomValue("cnd_oauth_refresh_");
   const createdAt = nowIso();
   const accessTokenId = randomValue("notes_access_");
   const refreshTokenId = randomValue("notes_refresh_");
-  const familyId = randomValue("notes_family_");
+  const accessTtlSeconds = accessTokenTtlSeconds();
+  const refreshTtl = refreshTokenTtlMs();
   store.accessTokens.push({
     tokenId: accessTokenId,
     tokenHash: hashValue(accessToken),
@@ -543,7 +613,7 @@ function issueTokenSet(store: OAuthStore, clientId: string, userId: string, scop
     scopes: [...scopes],
     resource,
     createdAt,
-    expiresAt: Math.floor(Date.now() / 1_000) + ACCESS_TOKEN_TTL_SECONDS,
+    expiresAt: Math.floor(Date.now() / 1_000) + accessTtlSeconds,
     revokedAt: null,
   });
   store.refreshTokens.push({
@@ -556,10 +626,13 @@ function issueTokenSet(store: OAuthStore, clientId: string, userId: string, scop
     resource,
     familyId,
     createdAt,
-    expiresAt: Date.now() + REFRESH_TOKEN_TTL_MS,
+    expiresAt: Date.now() + refreshTtl,
     revokedAt: null,
   });
-  return { accessToken, refreshToken, tokenType: "Bearer", expiresIn: ACCESS_TOKEN_TTL_SECONDS, scope: [...scopes] };
+  console.info(
+    `[mcp-oauth] issued tokens client=${clientId} scopes=${scopes.join(" ")} access_ttl_s=${accessTtlSeconds} refresh_expires_at=${new Date(Date.now() + refreshTtl).toISOString()}`,
+  );
+  return { accessToken, refreshToken, tokenType: "Bearer", expiresIn: accessTtlSeconds, scope: [...scopes] };
 }
 
 function verifyClientForToken(client: StoredOAuthClient, clientSecret: string | undefined): void {
@@ -597,9 +670,10 @@ export async function exchangeRefreshToken(input: { clientId: string; clientSecr
     if (!current || current.clientId !== client.clientId || current.revokedAt || current.expiresAt <= Date.now() || current.resource !== resource) {
       throw new OAuthProtocolError("invalid_grant", "Invalid refresh token");
     }
-    const scopes = ensureRequestedScopes(input.scopes, current.scopes);
+    const scopes = resolveRefreshScopes(current, input.scopes);
     current.revokedAt = nowIso();
-    return issueTokenSet(store, current.clientId, current.userId, scopes, current.resource);
+    // Sliding renewal: new refresh token inherits the family and gets a fresh TTL.
+    return issueTokenSet(store, current.clientId, current.userId, scopes, current.resource, current.familyId);
   });
 }
 
@@ -636,11 +710,32 @@ export async function revokeOAuthToken(token: string): Promise<void> {
 }
 
 export async function listOAuthClients(): Promise<OAuthClientView[]> {
-  const store = await readStore();
-  return store.clients.filter((client) => !client.revokedAt).map((client) => ({
-    ...toPublicClient(client),
-    activeTokenCount: store.accessTokens.filter((token) => token.clientId === client.clientId && !token.revokedAt && token.expiresAt > Math.floor(Date.now() / 1_000)).length,
-  }));
+  return withMutation((store) => {
+    const nowSeconds = Math.floor(Date.now() / 1_000);
+    const nowMs = Date.now();
+    return store.clients.filter((client) => !client.revokedAt).map((client) => {
+      const activeAccess = store.accessTokens
+        .filter((token) => token.clientId === client.clientId && !token.revokedAt && token.expiresAt > nowSeconds)
+        .sort((left, right) => right.expiresAt - left.expiresAt);
+      const activeRefresh = store.refreshTokens
+        .filter((token) => token.clientId === client.clientId && !token.revokedAt && token.expiresAt > nowMs)
+        .sort((left, right) => right.expiresAt - left.expiresAt);
+      const grantedScopes = uniqueMcpScopes([
+        ...(client.scopes ?? []),
+        ...activeAccess.flatMap((token) => token.scopes),
+        ...activeRefresh.flatMap((token) => token.scopes),
+        ...historicalScopesForClient(store, client.clientId, mcpResourceUrl()),
+      ]);
+      return {
+        ...toPublicClient(client),
+        scopes: grantedScopes.length ? grantedScopes : client.scopes,
+        activeTokenCount: activeAccess.length,
+        grantedScopes,
+        accessTokenExpiresAt: activeAccess[0] ? new Date(activeAccess[0].expiresAt * 1_000).toISOString() : null,
+        refreshTokenExpiresAt: activeRefresh[0] ? new Date(activeRefresh[0].expiresAt).toISOString() : null,
+      };
+    });
+  });
 }
 
 export async function revokeOAuthClient(clientId: string): Promise<boolean> {

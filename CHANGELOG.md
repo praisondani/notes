@@ -2,6 +2,19 @@
 
 All notable changes are documented here.
 
+## [0.6.4] - 2026-11-23
+
+### Fixed
+
+- OAuth refresh without a `scope` parameter now keeps the originally granted scopes instead of collapsing to `notes:read`.
+- Refresh tokens that already lost `notes:write` are healed from the client's grant history on the next refresh.
+
+### Changed
+
+- Refresh tokens last 180 days by default and slide forward on each use.
+- Access and refresh TTLs are configurable with `MCP_OAUTH_ACCESS_TOKEN_TTL_SECONDS` and `MCP_OAUTH_REFRESH_TOKEN_TTL_DAYS`.
+- Settings shows each connected agent's granted scopes plus access/refresh expiry.
+
 ## [0.6.3] - 2026-11-22
 
 ### Added

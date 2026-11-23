@@ -2,7 +2,7 @@
 
 Notes is a minimal, self-hostable private note workspace for text, images, files, links, checklists, folders, groups, filters, and search. It runs in a browser and keeps keyboard and mouse actions at parity.
 
-Version `0.6.3` adds Markdown preview in the editor, paste/drop inline images, and MCP `upload_image` / `upload_file` tools with size and type limits. Version `0.6.2` defaults OAuth MCP connections to `notes:read` and `notes:write`, records optional agent attribution on notes, and upgrades Next.js plus MCP/Hono/eslint dependencies so `npm audit --audit-level=low` is clean. Project-hub groups, browser-based OAuth for MCP agents, PKCE authorization, token rotation and revocation, and connected-agent controls are included; sync conflict resolution and native clients remain future work.
+Version `0.6.4` keeps OAuth refresh grants on the originally approved scopes, uses 180-day sliding refresh tokens, and shows scopes/expiry in Settings. Version `0.6.3` adds Markdown preview, paste/drop inline images, and MCP `upload_image` / `upload_file` tools. Project-hub groups, browser-based OAuth for MCP agents, PKCE authorization, token rotation and revocation, and connected-agent controls are included; sync conflict resolution and native clients remain future work.
 
 ## Features
 

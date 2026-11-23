@@ -9,6 +9,7 @@ import {
   exchangeAuthorizationCode,
   exchangeRefreshToken,
   getAuthorizationRequest,
+  listOAuthClients,
   registerOAuthClient,
   verifyOAuthAccessToken,
 } from "@/lib/mcp-oauth";
@@ -22,12 +23,38 @@ beforeEach(async () => {
   dataDirectory = await mkdtemp(path.join(os.tmpdir(), "notes-mcp-oauth-"));
   process.env.DATA_DIR = dataDirectory;
   process.env.APP_URL = "http://localhost:3000";
+  delete process.env.MCP_OAUTH_ACCESS_TOKEN_TTL_SECONDS;
+  delete process.env.MCP_OAUTH_REFRESH_TOKEN_TTL_DAYS;
 });
 
 afterEach(async () => {
   process.env = { ...originalEnvironment };
   await rm(dataDirectory, { recursive: true, force: true });
 });
+
+async function issueTokens(scopes?: ("notes:read" | "notes:write")[]) {
+  const registration = await registerOAuthClient({
+    clientName: "Grok Bot",
+    redirectUris: ["https://grok.example/callback"],
+    tokenEndpointAuthMethod: "none",
+  });
+  const pending = await beginAuthorizationRequest({
+    clientId: registration.client.clientId,
+    redirectUri: "https://grok.example/callback",
+    codeChallenge: createCodeChallenge(verifier),
+    ...(scopes ? { scopes } : {}),
+    resource,
+  }, "browser-secret");
+  const approved = await approveAuthorizationRequest(pending.transactionId, "browser-secret", "owner");
+  const tokens = await exchangeAuthorizationCode({
+    clientId: registration.client.clientId,
+    code: approved.code!,
+    codeVerifier: verifier,
+    redirectUri: "https://grok.example/callback",
+    resource,
+  });
+  return { registration, tokens };
+}
 
 describe("MCP OAuth authorization code flow", () => {
   it("registers a public client, binds consent to PKCE, and issues scoped tokens", async () => {
@@ -61,7 +88,7 @@ describe("MCP OAuth authorization code flow", () => {
 
     const tokens = await exchangeAuthorizationCode({
       clientId: registration.client.clientId,
-      code: approved.code,
+      code: approved.code!,
       codeVerifier: verifier,
       redirectUri: "http://127.0.0.1:54321/callback",
       resource,
@@ -73,6 +100,13 @@ describe("MCP OAuth authorization code flow", () => {
 
     const accessContext = await verifyOAuthAccessToken(tokens.accessToken, resource);
     expect(accessContext).toMatchObject({ userId: "owner", scopes: ["notes:read"], source: "oauth" });
+  });
+
+  it("defaults omitted authorize scopes to read and write", async () => {
+    const { tokens } = await issueTokens();
+    expect(tokens.scope).toEqual(["notes:read", "notes:write"]);
+    const accessContext = await verifyOAuthAccessToken(tokens.accessToken, resource);
+    expect(accessContext?.scopes).toEqual(["notes:read", "notes:write"]);
   });
 
   it("rotates refresh tokens and rejects the previous refresh token", async () => {
@@ -92,7 +126,7 @@ describe("MCP OAuth authorization code flow", () => {
     const approved = await approveAuthorizationRequest(pending.transactionId, "browser-secret", "owner");
     const initial = await exchangeAuthorizationCode({
       clientId: registration.client.clientId,
-      code: approved.code,
+      code: approved.code!,
       codeVerifier: verifier,
       redirectUri: "https://cursor.example/callback",
       resource,
@@ -109,5 +143,87 @@ describe("MCP OAuth authorization code flow", () => {
       refreshToken: initial.refreshToken,
       resource,
     })).rejects.toThrow("Invalid refresh token");
+  });
+
+  it("keeps originally granted read+write scopes when refresh omits scope", async () => {
+    const { registration, tokens } = await issueTokens(["notes:read", "notes:write"]);
+    expect(tokens.scope).toEqual(["notes:read", "notes:write"]);
+
+    const refreshed = await exchangeRefreshToken({
+      clientId: registration.client.clientId,
+      refreshToken: tokens.refreshToken,
+      resource,
+      // intentionally omit scopes — matches real MCP clients
+    });
+
+    expect(refreshed.scope).toEqual(["notes:read", "notes:write"]);
+    const accessContext = await verifyOAuthAccessToken(refreshed.accessToken, resource);
+    expect(accessContext?.scopes).toEqual(["notes:read", "notes:write"]);
+  });
+
+  it("heals refresh tokens that previously lost write after a buggy refresh", async () => {
+    const { registration, tokens } = await issueTokens(["notes:read", "notes:write"]);
+
+    // Simulate the pre-0.6.4 bug: a refresh token that only retained notes:read
+    // while history still shows the client was granted write.
+    const storePath = path.join(dataDirectory, "mcp-oauth.json");
+    const { readFile, writeFile } = await import("node:fs/promises");
+    const store = JSON.parse(await readFile(storePath, "utf8")) as {
+      refreshTokens: Array<{ tokenHash: string; scopes: string[]; revokedAt?: string | null }>;
+      accessTokens: Array<{ scopes: string[] }>;
+      migrations?: { refreshScopesHealedAt?: string };
+    };
+    const activeRefresh = store.refreshTokens.find((token) => !token.revokedAt);
+    expect(activeRefresh).toBeTruthy();
+    activeRefresh!.scopes = ["notes:read"];
+    delete store.migrations;
+    await writeFile(storePath, `${JSON.stringify(store, null, 2)}\n`, "utf8");
+
+    const healed = await exchangeRefreshToken({
+      clientId: registration.client.clientId,
+      refreshToken: tokens.refreshToken,
+      resource,
+    });
+
+    expect(healed.scope).toEqual(["notes:read", "notes:write"]);
+    const accessContext = await verifyOAuthAccessToken(healed.accessToken, resource);
+    expect(accessContext?.scopes).toEqual(["notes:read", "notes:write"]);
+  });
+
+  it("allows refresh to narrow scopes but never expand beyond the grant", async () => {
+    const { registration, tokens } = await issueTokens(["notes:read", "notes:write"]);
+    const narrowed = await exchangeRefreshToken({
+      clientId: registration.client.clientId,
+      refreshToken: tokens.refreshToken,
+      scopes: ["notes:read"],
+      resource,
+    });
+    expect(narrowed.scope).toEqual(["notes:read"]);
+
+    await expect(exchangeRefreshToken({
+      clientId: registration.client.clientId,
+      refreshToken: narrowed.refreshToken,
+      scopes: ["notes:read", "notes:write"],
+      resource,
+    })).rejects.toThrow(/scope/i);
+  });
+
+  it("uses configurable TTLs and surfaces scopes/expiry in the client list", async () => {
+    process.env.MCP_OAUTH_ACCESS_TOKEN_TTL_SECONDS = "120";
+    process.env.MCP_OAUTH_REFRESH_TOKEN_TTL_DAYS = "180";
+    const { tokens } = await issueTokens(["notes:read", "notes:write"]);
+    expect(tokens.expiresIn).toBe(120);
+
+    const clients = await listOAuthClients();
+    expect(clients[0]).toMatchObject({
+      clientName: "Grok Bot",
+      grantedScopes: ["notes:read", "notes:write"],
+      activeTokenCount: 1,
+    });
+    expect(clients[0]?.accessTokenExpiresAt).toBeTruthy();
+    expect(clients[0]?.refreshTokenExpiresAt).toBeTruthy();
+    const refreshExpiry = new Date(clients[0]!.refreshTokenExpiresAt!).getTime();
+    const expectedMin = Date.now() + 170 * 24 * 60 * 60 * 1_000;
+    expect(refreshExpiry).toBeGreaterThan(expectedMin);
   });
 });

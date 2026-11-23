@@ -13,7 +13,24 @@ import { applyTheme, readThemePreference, resolveDarkTheme, setThemePreference a
 import type { AuthUser } from "@/lib/auth-store";
 
 type Session = { setupRequired: boolean; authenticated: boolean; user?: AuthUser };
-type ConnectedClient = { clientId: string; clientName: string; clientUri?: string; scopes?: string[]; createdAt: string; activeTokenCount: number };
+type ConnectedClient = {
+  clientId: string;
+  clientName: string;
+  clientUri?: string;
+  scopes?: string[];
+  grantedScopes?: string[];
+  createdAt: string;
+  activeTokenCount: number;
+  accessTokenExpiresAt?: string | null;
+  refreshTokenExpiresAt?: string | null;
+};
+
+function formatExpiry(value: string | null | undefined): string {
+  if (!value) return "no active token";
+  const expiresAt = new Date(value);
+  if (Number.isNaN(expiresAt.getTime())) return "unknown expiry";
+  return `expires ${expiresAt.toLocaleString()}`;
+}
 
 function statusClass(message: string): string {
   return message.startsWith("Error:") ? "text-destructive" : "text-primary";
@@ -252,7 +269,10 @@ export function SettingsScreen() {
             <div className="settings-data-row"><div><strong>Export workspace</strong><p>Download notes, folders, groups, tags, and attachment metadata as JSON.</p></div><Button variant="outline" onClick={exportWorkspace} disabled={dataLoading}><Download className="h-4 w-4" />{dataLoading ? "Preparing…" : "Export"}</Button></div>
             <div className="settings-data-row"><div><strong>Remote MCP endpoint</strong><p>Add this URL to Codex, Cursor, or another MCP client. The client will open a browser sign-in and consent screen.</p><code className="settings-code">{mcpEndpoint}</code></div><Button variant="outline" onClick={copyMcpEndpoint}>{copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}{copied ? "Copied" : "Copy URL"}</Button></div>
             <div className="settings-mcp-help"><strong>Browser-based connection</strong><p>Use the endpoint above with OAuth. Approve only the permissions you need. Notes uses PKCE, exact redirect URI checks, resource-bound access tokens, refresh-token rotation, and revocation.</p><p>For scripts or clients without OAuth, run <code>npm run mcp:token -- create --label coding-agent --scopes notes:read</code> on the server and store the one-time bearer token in the client’s secret manager. Add <code>notes:write</code> only for agents that need to change notes.</p></div>
-            <div className="settings-connected-agents"><div className="settings-connected-heading"><div><strong>Connected agents</strong><p>Revoke an agent here to invalidate its OAuth client and all of its tokens.</p></div><UsersRound className="h-4 w-4 text-muted-foreground" /></div>{clientsLoading ? <p className="settings-empty-note">Loading connected agents…</p> : connectedClients.length === 0 ? <p className="settings-empty-note">No browser-connected agents yet.</p> : <div className="settings-client-list">{connectedClients.map((client) => <div className="settings-client" key={client.clientId}><div><strong>{client.clientName}</strong><p>{client.scopes?.join(", ") || "notes:read"} · connected {new Date(client.createdAt).toLocaleDateString()}</p></div><Button variant="outline" size="sm" onClick={() => revokeClient(client.clientId, client.clientName)}><Trash2 className="h-3.5 w-3.5" />Revoke</Button></div>)}</div>}</div>
+            <div className="settings-connected-agents"><div className="settings-connected-heading"><div><strong>Connected agents</strong><p>Revoke an agent here to invalidate its OAuth client and all of its tokens. Scopes and expiry come from the active grant.</p></div><UsersRound className="h-4 w-4 text-muted-foreground" /></div>{clientsLoading ? <p className="settings-empty-note">Loading connected agents…</p> : connectedClients.length === 0 ? <p className="settings-empty-note">No browser-connected agents yet.</p> : <div className="settings-client-list">{connectedClients.map((client) => {
+              const scopes = (client.grantedScopes?.length ? client.grantedScopes : client.scopes)?.join(", ") || "none";
+              return <div className="settings-client" key={client.clientId}><div><strong>{client.clientName}</strong><p>{scopes} · connected {new Date(client.createdAt).toLocaleDateString()}</p><p className="settings-empty-note">Access {formatExpiry(client.accessTokenExpiresAt)} · Refresh {formatExpiry(client.refreshTokenExpiresAt)} · {client.activeTokenCount} active access token{client.activeTokenCount === 1 ? "" : "s"}</p></div><Button variant="outline" size="sm" onClick={() => revokeClient(client.clientId, client.clientName)}><Trash2 className="h-3.5 w-3.5" />Revoke</Button></div>;
+            })}</div>}</div>
             {dataMessage && <p className={statusClass(dataMessage)} role="status">{dataMessage}</p>}
           </section>
 

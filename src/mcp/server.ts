@@ -4,6 +4,7 @@ import * as z from "zod/v4";
 import { hasMcpScope, type McpAuthContext, type McpScope } from "@/lib/mcp-auth";
 import {
   addNoteAttachmentRecord,
+  appendToNote,
   createFolderRecord,
   createGroupRecord,
   createNoteRecord,
@@ -66,7 +67,16 @@ const noteFieldsSchema = {
   archived: z.boolean().optional(),
 };
 const noteInputSchema = z.object(noteFieldsSchema);
-const updateNoteInputSchema = noteInputSchema.extend({ note_id: identifier });
+const updateNoteInputSchema = noteInputSchema.extend({
+  note_id: identifier,
+  expected_updated_at: z.string().min(1).max(64).optional(),
+});
+const appendToNoteInputSchema = z.object({
+  note_id: identifier,
+  markdown: z.string().min(1).max(100_000),
+  under_heading: z.string().min(1).max(200).optional(),
+  position: z.enum(["end", "top_of_section"]).optional(),
+});
 const listNotesInputSchema = z.object({
   search: z.string().max(500).optional(),
   filter: z.enum(["all", "inbox", "pinned", "archived", "links", "files"]).optional(),
@@ -144,6 +154,7 @@ const rememberInputSchema = z.object({
 
 type NoteToolInput = z.infer<typeof noteInputSchema>;
 type UpdateNoteToolInput = z.infer<typeof updateNoteInputSchema>;
+type AppendToNoteToolInput = z.infer<typeof appendToNoteInputSchema>;
 type ListNotesToolInput = z.infer<typeof listNotesInputSchema>;
 type SearchToolInput = z.infer<typeof searchInputSchema>;
 type RagToolInput = z.infer<typeof ragInputSchema>;
@@ -273,10 +284,25 @@ export function createMcpServer(context: McpServerContext): McpServer {
 
   server.registerTool("update_note", {
     title: "Update note",
-    description: "Update selected fields on an existing note. Omitted fields are preserved.",
+    description: "Update selected fields on an existing note. Omitted fields are preserved. Pass expected_updated_at to fail with a conflict when the note changed since you read it.",
     inputSchema: updateNoteInputSchema,
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
-  }, async (input: UpdateNoteToolInput) => execute(context, "notes:write", () => updateNoteRecord(input.note_id, mapNoteInput(input), { source: context.source, clientId: context.clientId, clientName: context.clientName, label: context.label })));
+  }, async (input: UpdateNoteToolInput) => execute(context, "notes:write", () => updateNoteRecord(input.note_id, {
+    ...mapNoteInput(input),
+    expectedUpdatedAt: input.expected_updated_at,
+  }, { source: context.source, clientId: context.clientId, clientName: context.clientName, label: context.label })));
+
+  server.registerTool("append_to_note", {
+    title: "Append to note",
+    description: "Atomically append markdown to a note, optionally under a ## heading. Prefer this over get-then-update when adding text.",
+    inputSchema: appendToNoteInputSchema,
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+  }, async (input: AppendToNoteToolInput) => execute(context, "notes:write", () => appendToNote({
+    noteId: input.note_id,
+    markdown: input.markdown,
+    underHeading: input.under_heading,
+    position: input.position,
+  }, { source: context.source, clientId: context.clientId, clientName: context.clientName, label: context.label })));
 
   server.registerTool("delete_note", {
     title: "Delete note",

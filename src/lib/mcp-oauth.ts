@@ -33,6 +33,7 @@ export type OAuthTokenEndpointAuthMethod = (typeof TOKEN_ENDPOINT_AUTH_METHODS)[
 type StoredOAuthClient = {
   clientId: string;
   clientName: string;
+  clientLabel?: string;
   clientUri?: string;
   redirectUris: string[];
   tokenEndpointAuthMethod: OAuthTokenEndpointAuthMethod;
@@ -110,12 +111,23 @@ type OAuthStore = {
 export type OAuthClient = {
   clientId: string;
   clientName: string;
+  clientLabel?: string;
   clientUri?: string;
   redirectUris: string[];
   tokenEndpointAuthMethod: OAuthTokenEndpointAuthMethod;
   scopes?: McpScope[];
   createdAt: string;
 };
+
+export function oauthClientDisplayName(client: Pick<OAuthClient, "clientId" | "clientName" | "clientLabel">): string {
+  const base = client.clientLabel?.trim() || client.clientName;
+  const suffix = client.clientId.slice(-6);
+  return suffix ? `${base} · ${suffix}` : base;
+}
+
+export function oauthClientAttributionName(client: Pick<OAuthClient, "clientName" | "clientLabel">): string {
+  return client.clientLabel?.trim() || client.clientName;
+}
 
 export type OAuthClientRegistrationInput = {
   clientName?: string;
@@ -141,7 +153,9 @@ export type OAuthAuthorizationRequestInput = {
 
 export type OAuthAuthorizationRequestView = {
   transactionId: string;
+  clientId: string;
   clientName: string;
+  clientLabel?: string;
   clientUri?: string;
   redirectUri: string;
   state?: string;
@@ -386,6 +400,14 @@ function validateClientName(value: string | undefined): string {
   return name;
 }
 
+function validateClientLabel(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  const label = value.trim();
+  if (!label) return undefined;
+  if (label.length > 80) throw new OAuthProtocolError("invalid_request", "client label is too long.");
+  return label;
+}
+
 function validateClientUri(value: string | undefined): string | undefined {
   if (!value) return undefined;
   try {
@@ -420,6 +442,7 @@ function toPublicClient(client: StoredOAuthClient): OAuthClient {
   return {
     clientId: client.clientId,
     clientName: client.clientName,
+    ...(client.clientLabel ? { clientLabel: client.clientLabel } : {}),
     ...(client.clientUri ? { clientUri: client.clientUri } : {}),
     redirectUris: [...client.redirectUris],
     tokenEndpointAuthMethod: client.tokenEndpointAuthMethod,
@@ -553,7 +576,9 @@ export async function getAuthorizationRequest(transactionId: string, browserSecr
   if (!client) return null;
   return {
     transactionId: pending.transactionId,
+    clientId: client.clientId,
     clientName: client.clientName,
+    ...(client.clientLabel ? { clientLabel: client.clientLabel } : {}),
     ...(client.clientUri ? { clientUri: client.clientUri } : {}),
     redirectUri: pending.redirectUri,
     ...(pending.state ? { state: pending.state } : {}),
@@ -564,7 +589,13 @@ export async function getAuthorizationRequest(transactionId: string, browserSecr
   };
 }
 
-export async function approveAuthorizationRequest(transactionId: string, browserSecret: string, userId: string, approved = true): Promise<OAuthAuthorizationCompletion> {
+export async function approveAuthorizationRequest(
+  transactionId: string,
+  browserSecret: string,
+  userId: string,
+  approved = true,
+  options?: { clientLabel?: string },
+): Promise<OAuthAuthorizationCompletion> {
   return withMutation((store) => {
     const index = store.authorizationRequests.findIndex((candidate) => candidate.transactionId === transactionId);
     const pending = index >= 0 ? store.authorizationRequests[index] : undefined;
@@ -573,6 +604,11 @@ export async function approveAuthorizationRequest(transactionId: string, browser
     }
     store.authorizationRequests.splice(index, 1);
     if (!approved) return { redirectUri: pending.redirectUri, ...(pending.state ? { state: pending.state } : {}), error: "access_denied" as const };
+    const label = validateClientLabel(options?.clientLabel);
+    if (label) {
+      const client = store.clients.find((candidate) => candidate.clientId === pending.clientId && !candidate.revokedAt);
+      if (client) client.clientLabel = label;
+    }
     const code = randomValue("notes_code_");
     store.authorizationCodes.push({
       codeHash: hashValue(code),
@@ -692,7 +728,7 @@ export async function verifyOAuthAccessToken(token: string, resource: string): P
     scopes: [...accessToken.scopes], 
     source: "oauth",
     clientId: client.clientId,
-    clientName: client.clientName,
+    clientName: oauthClientAttributionName(client),
   };
 }
 

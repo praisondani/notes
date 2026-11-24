@@ -416,11 +416,22 @@ export async function listNotes(options: ListNotesOptions = {}): Promise<{
   };
 }
 
-export async function getNoteRecord(noteId: string): Promise<Note> {
+function resolveNoteReference(notes: Note[], noteId: string): Note {
   const id = textValue(noteId, "Note ID", 200);
-  const note = (await loadWorkspace()).notes.find((candidate) => candidate.id === id);
-  if (!note) fail("Note not found");
-  return clone(note);
+  const exact = notes.find((candidate) => candidate.id === id);
+  if (exact) return exact;
+
+  const prefixMatch = /^note-([0-9a-f]{8,})$/i.exec(id);
+  if (!prefixMatch) fail("Note not found");
+  const prefix = `note-${prefixMatch[1].toLocaleLowerCase()}`;
+  const matches = notes.filter((candidate) => candidate.id.toLocaleLowerCase().startsWith(prefix));
+  if (matches.length === 1) return matches[0]!;
+  if (matches.length > 1) fail("Note ID is ambiguous");
+  fail("Note not found");
+}
+
+export async function getNoteRecord(noteId: string): Promise<Note> {
+  return clone(resolveNoteReference((await loadWorkspace()).notes, noteId));
 }
 
 const AGENT_BRAIN_TAG = "agent-brain";

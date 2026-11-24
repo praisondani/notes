@@ -103,4 +103,38 @@ describe("MCP server", () => {
     await client.close();
     await server.close();
   });
+
+  it("exposes get_agent_context to read-only credentials without write side effects", async () => {
+    const writable = await connectServer(false);
+    await writable.client.callTool({
+      name: "create_note",
+      arguments: {
+        title: "Agent Brain: start here",
+        content: "Index for agents",
+        tags: ["agent-brain", "index"],
+        pinned: true,
+      },
+    });
+    await writable.client.close();
+    await writable.server.close();
+
+    const { client, server } = await connectServer(true);
+    const tools = await client.listTools();
+    const result = await client.callTool({ name: "get_agent_context", arguments: { max_chars: 2_000 } });
+    const payload = JSON.parse(String(result.content[0]?.type === "text" ? result.content[0].text : "{}")) as {
+      index?: { title?: string } | null;
+      hint?: string;
+    };
+    const brain = await client.readResource({ uri: "notes://brain" });
+    const prompts = await client.listPrompts();
+
+    expect(tools.tools.map((tool) => tool.name)).toContain("get_agent_context");
+    expect(result.isError).not.toBe(true);
+    expect(payload.index?.title || payload.hint).toBeTruthy();
+    expect(JSON.stringify(brain)).toContain("brain_version");
+    expect(prompts.prompts.map((prompt) => prompt.name)).toContain("start_session");
+
+    await client.close();
+    await server.close();
+  });
 });

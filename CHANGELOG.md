@@ -2,6 +2,12 @@
 
 All notable changes are documented here.
 
+## [0.6.8] - 2026-11-24
+
+### Added
+
+- MCP tool `get_agent_context`, resource `notes://brain`, and prompt `start_session` for a bounded shared agent-brain bundle.
+
 ## [0.6.7] - 2026-11-24
 
 ### Added

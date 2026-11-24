@@ -1,4 +1,5 @@
 import { createId, createNote as createBaseNote, getNotePreview, noteMatchesSearch } from "@/lib/notes";
+import { detectSecret } from "@/lib/secrets-guard";
 import { storeBytes } from "@/lib/storage";
 import { loadWorkspace, updateWorkspace } from "@/lib/workspace-store";
 import type {
@@ -576,6 +577,197 @@ export async function getAgentContext(options: AgentContextOptions = {}): Promis
     brain_version,
     updated_at,
   };
+}
+
+export const REMEMBER_KINDS = ["fact", "preference", "decision", "project_status", "correction"] as const;
+export type RememberKind = (typeof REMEMBER_KINDS)[number];
+
+export type RememberInput = {
+  statement: string;
+  kind: RememberKind;
+  topic?: string;
+  source?: string;
+  reason?: string;
+};
+
+export type RememberResult =
+  | { status: "saved"; note_id: string; line: string }
+  | { status: "duplicate"; note_id: string; existing: string };
+
+function notesTimeZone(): string {
+  return process.env.NOTES_TIME_ZONE?.trim() || "America/Chicago";
+}
+
+function formatNotesDate(now = new Date()): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: notesTimeZone(),
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(now);
+}
+
+function normalizeStatement(value: string): string {
+  return value.trim().toLocaleLowerCase().replace(/\s+/g, " ");
+}
+
+function lexicalSimilarity(left: string, right: string): number {
+  const leftTokens = new Set(tokenize(left));
+  const rightTokens = new Set(tokenize(right));
+  if (!leftTokens.size || !rightTokens.size) return 0;
+  let overlap = 0;
+  for (const token of leftTokens) if (rightTokens.has(token)) overlap += 1;
+  return overlap / Math.max(leftTokens.size, rightTokens.size);
+}
+
+function rememberTargetMeta(kind: RememberKind, topic?: string): { title: string; tags: string[]; section?: string } {
+  switch (kind) {
+    case "decision":
+      return { title: "Agent Brain: decisions", tags: [AGENT_BRAIN_TAG, "decisions"] };
+    case "project_status":
+      return {
+        title: "Agent Brain: projects",
+        tags: [AGENT_BRAIN_TAG, "projects"],
+        section: topic?.trim() || "General",
+      };
+    case "preference":
+      return { title: "Agent Brain: rules", tags: [AGENT_BRAIN_TAG, "rules"] };
+    case "correction":
+    case "fact":
+    default:
+      return { title: "Agent Brain: profile", tags: [AGENT_BRAIN_TAG, "profile"] };
+  }
+}
+
+function ensureBrainFolder(workspace: Workspace): { workspace: Workspace; folderId: string } {
+  const existing = workspace.folders.find((folder) => folder.name.trim().toLocaleLowerCase() === "agent brain" && folder.groupId === null);
+  if (existing) return { workspace, folderId: existing.id };
+  const folder: Folder = {
+    id: createId("folder"),
+    name: "Agent Brain",
+    parentId: null,
+    groupId: null,
+    color: "slate",
+    position: workspace.folders.length,
+  };
+  return { workspace: { ...workspace, folders: [...workspace.folders, folder] }, folderId: folder.id };
+}
+
+function ensureBrainNote(workspace: Workspace, folderId: string, title: string, tags: string[]): { workspace: Workspace; note: Note } {
+  const existing = workspace.notes.find((note) => !note.archived && note.title === title && noteHasTag(note, AGENT_BRAIN_TAG));
+  if (existing) return { workspace, note: existing };
+  const note = {
+    ...createBaseNote(new Date(), title),
+    folderId,
+    tags: [...new Set(tags.map((tag) => tag.toLocaleLowerCase()))],
+    content: "",
+    position: workspace.notes.length,
+  };
+  return { workspace: { ...workspace, notes: [...workspace.notes, note] }, note };
+}
+
+function appendUnderHeading(content: string, heading: string, line: string): string {
+  const marker = `## ${heading}`;
+  const normalized = content.replace(/\s+$/u, "");
+  if (!normalized.trim()) return `${marker}\n${line}\n`;
+  const index = normalized.split(/\r?\n/).findIndex((entry) => entry.trim() === marker);
+  if (index < 0) return `${normalized}\n\n${marker}\n${line}\n`;
+  const lines = normalized.split(/\r?\n/);
+  let insertAt = index + 1;
+  while (insertAt < lines.length && !/^##\s+/.test(lines[insertAt] ?? "")) insertAt += 1;
+  lines.splice(insertAt, 0, line);
+  return `${lines.join("\n").replace(/\s+$/u, "")}\n`;
+}
+
+function markSuperseded(content: string, statement: string, date: string): string {
+  const needle = normalizeStatement(statement);
+  return content
+    .split(/\r?\n/)
+    .map((line) => {
+      if (!line.trim() || /\(superseded \d{4}-\d{2}-\d{2}\)/.test(line)) return line;
+      const body = line.replace(/^- \d{4}-\d{2}-\d{2} · [^:]+:\s*/, "");
+      return normalizeStatement(body) === needle || lexicalSimilarity(body, statement) >= 0.85
+        ? `${line.replace(/\s+$/u, "")} (superseded ${date})`
+        : line;
+    })
+    .join("\n");
+}
+
+function statementBody(line: string): string {
+  return line
+    .replace(/^- \d{4}-\d{2}-\d{2} · [^:]+:\s*/, "")
+    .replace(/\s*\(superseded \d{4}-\d{2}-\d{2}\)\s*$/, "")
+    .trim();
+}
+
+export async function rememberNote(input: RememberInput, context?: McpOperationContext): Promise<RememberResult> {
+  const statement = textValue(input.statement, "Statement", 1_000).trim();
+  if (!REMEMBER_KINDS.includes(input.kind)) fail("Remember kind is invalid");
+  const secret = detectSecret(statement);
+  if (secret.blocked) fail(secret.message ?? "Looks like a secret; not saved.");
+
+  const source = input.source === undefined ? undefined : textValue(input.source, "Source", 200).trim();
+  const reason = input.reason === undefined ? undefined : textValue(input.reason, "Reason", 500).trim();
+  const topic = input.topic === undefined ? undefined : textValue(input.topic, "Topic", 120).trim();
+  const identity = createClientIdentity(context);
+  const clientName = identity?.clientName || "Unknown agent";
+  const date = formatNotesDate();
+  const line = `- ${date} · ${clientName}${source ? ` · ${source}` : ""}: ${statement}${reason ? ` (${reason})` : ""}`;
+  const target = rememberTargetMeta(input.kind, topic);
+  const normalized = normalizeStatement(statement);
+  let result: RememberResult | undefined;
+
+  await updateWorkspace((workspace) => {
+    const withFolder = ensureBrainFolder(workspace);
+    const ensured = ensureBrainNote(withFolder.workspace, withFolder.folderId, target.title, target.tags);
+    const note = ensured.note;
+    const lines = note.content.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean);
+
+    const exact = lines.find((existing) => normalizeStatement(statementBody(existing)) === normalized);
+    if (exact) {
+      result = { status: "duplicate", note_id: note.id, existing: exact };
+      return ensured.workspace;
+    }
+
+    const near = lines.find((existing) => lexicalSimilarity(statementBody(existing), statement) >= 0.85);
+    if (near && input.kind !== "correction") {
+      result = { status: "duplicate", note_id: note.id, existing: near };
+      return ensured.workspace;
+    }
+
+    let nextContent = note.content;
+    if (input.kind === "correction") {
+      for (const existing of lines) {
+        const body = statementBody(existing);
+        if (lexicalSimilarity(body, statement) >= 0.4 || (reason && lexicalSimilarity(body, reason) >= 0.5)) {
+          nextContent = markSuperseded(nextContent, body, date);
+        }
+      }
+    }
+
+    if (target.section) {
+      nextContent = appendUnderHeading(nextContent, target.section, line);
+    } else {
+      const base = nextContent.replace(/\s+$/u, "");
+      nextContent = `${base}${base ? "\n" : ""}${line}\n`;
+    }
+
+    const updatedBy = createClientIdentity(context);
+    const updatedNote: Note = {
+      ...note,
+      content: nextContent,
+      updatedAt: new Date().toISOString(),
+      ...(updatedBy ? { updatedBy } : {}),
+    };
+    result = { status: "saved", note_id: note.id, line };
+    return {
+      ...ensured.workspace,
+      notes: ensured.workspace.notes.map((candidate) => candidate.id === note.id ? updatedNote : candidate),
+    };
+  });
+
+  if (!result) fail("Remember failed");
+  return result;
 }
 
 export async function createNoteRecord(input: NoteCreateInput = {}, context?: McpOperationContext): Promise<Note> {

@@ -18,6 +18,7 @@ import {
   listNotes,
   McpServiceError,
   ragQuery,
+  rememberNote,
   removeNoteAttachmentRecord,
   searchNotes,
   updateFolderRecord,
@@ -133,6 +134,13 @@ const agentContextInputSchema = z.object({
   max_chars: z.number().int().min(100).max(50_000).optional(),
   bridge_entries: z.number().int().min(1).max(100).optional(),
 });
+const rememberInputSchema = z.object({
+  statement: z.string().min(1).max(1_000),
+  kind: z.enum(["fact", "preference", "decision", "project_status", "correction"]),
+  topic: z.string().max(120).optional(),
+  source: z.string().max(200).optional(),
+  reason: z.string().max(500).optional(),
+});
 
 type NoteToolInput = z.infer<typeof noteInputSchema>;
 type UpdateNoteToolInput = z.infer<typeof updateNoteInputSchema>;
@@ -219,6 +227,19 @@ export function createMcpServer(context: McpServerContext): McpServer {
     maxChars: input.max_chars,
     bridgeEntries: input.bridge_entries,
   })));
+
+  server.registerTool("remember", {
+    title: "Remember",
+    description: "Append a lasting fact, preference, decision, project status, or correction to the Agent Brain. Skips duplicates, rejects secrets, and attributes the write to this MCP client.",
+    inputSchema: rememberInputSchema,
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+  }, async (input: z.infer<typeof rememberInputSchema>) => execute(context, "notes:write", () => rememberNote({
+    statement: input.statement,
+    kind: input.kind,
+    topic: input.topic,
+    source: input.source,
+    reason: input.reason,
+  }, { source: context.source, clientId: context.clientId, clientName: context.clientName, label: context.label })));
 
   server.registerTool("list_notes", {
     title: "List notes",

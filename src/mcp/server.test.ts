@@ -137,4 +137,42 @@ describe("MCP server", () => {
     await client.close();
     await server.close();
   });
+
+  it("exposes remember with attribution and rejects read-only credentials", async () => {
+    const writable = await connectServer(false);
+    const tools = await writable.client.listTools();
+    const saved = await writable.client.callTool({
+      name: "remember",
+      arguments: {
+        statement: "George uses Notes as the shared agent brain.",
+        kind: "fact",
+        source: "session",
+      },
+    });
+    const payload = JSON.parse(String(saved.content[0]?.type === "text" ? saved.content[0].text : "{}")) as {
+      status?: string;
+      line?: string;
+      note_id?: string;
+    };
+
+    expect(tools.tools.map((tool) => tool.name)).toContain("remember");
+    expect(saved.isError).not.toBe(true);
+    expect(payload.status).toBe("saved");
+    expect(payload.line).toContain("File Token");
+    expect(payload.note_id).toBeTruthy();
+
+    await writable.client.close();
+    await writable.server.close();
+
+    const readonly = await connectServer(true);
+    const denied = await readonly.client.callTool({
+      name: "remember",
+      arguments: { statement: "Should not write", kind: "fact" },
+    });
+    expect(denied.isError).toBe(true);
+    expect(JSON.stringify(denied)).toContain("notes:write");
+
+    await readonly.client.close();
+    await readonly.server.close();
+  });
 });

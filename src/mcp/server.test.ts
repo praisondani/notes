@@ -138,6 +138,38 @@ describe("MCP server", () => {
     await server.close();
   });
 
+  it("exposes append_to_note and conflict-safe update_note", async () => {
+    const { client, server } = await connectServer();
+    const created = await client.callTool({
+      name: "create_note",
+      arguments: { title: "Concurrent", content: "## Log\n- seed\n" },
+    });
+    const note = JSON.parse(String(created.content[0]?.type === "text" ? created.content[0].text : "{}")) as {
+      id: string;
+      updatedAt: string;
+    };
+    const appended = await client.callTool({
+      name: "append_to_note",
+      arguments: { note_id: note.id, markdown: "- appended", under_heading: "Log" },
+    });
+    const conflict = await client.callTool({
+      name: "update_note",
+      arguments: {
+        note_id: note.id,
+        content: "stale",
+        expected_updated_at: "2000-01-01T00:00:00.000Z",
+      },
+    });
+
+    expect(appended.isError).not.toBe(true);
+    expect(JSON.stringify(appended)).toContain("- appended");
+    expect(conflict.isError).toBe(true);
+    expect(JSON.stringify(conflict)).toMatch(/conflict/i);
+
+    await client.close();
+    await server.close();
+  });
+
   it("exposes remember with attribution and rejects read-only credentials", async () => {
     const writable = await connectServer(false);
     const tools = await writable.client.listTools();

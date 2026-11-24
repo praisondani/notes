@@ -77,7 +77,26 @@ export type NoteCreateInput = {
 export type NoteUpdateInput = Omit<NoteCreateInput, "title" | "content"> & {
   title?: string;
   content?: string;
+  expectedUpdatedAt?: string;
 };
+
+export type NoteMutationResult = Note & {
+  warning?: string;
+};
+
+export type AppendToNoteInput = {
+  noteId: string;
+  markdown: string;
+  underHeading?: string;
+  position?: "end" | "top_of_section";
+};
+
+const SECRET_WRITE_WARNING = "Looks like a secret; saved anyway. Prefer a password vault and store only where it lives.";
+
+function secretWarningFor(text: string | undefined): string | undefined {
+  if (!text) return undefined;
+  return detectSecret(text).blocked ? SECRET_WRITE_WARNING : undefined;
+}
 
 export type ListNotesOptions = {
   search?: string;
@@ -770,28 +789,90 @@ export async function rememberNote(input: RememberInput, context?: McpOperationC
   return result;
 }
 
-export async function createNoteRecord(input: NoteCreateInput = {}, context?: McpOperationContext): Promise<Note> {
+export async function createNoteRecord(input: NoteCreateInput = {}, context?: McpOperationContext): Promise<NoteMutationResult> {
+  const warning = secretWarningFor(input.content);
   return updateWorkspace((workspace) => {
     const patch = normalizeNotePatch(input, workspace);
     const createdBy = createClientIdentity(context);
     const note = { ...createBaseNote(new Date(), (patch.title as string | undefined) ?? "Untitled note"), ...patch, ...(createdBy ? { createdBy, updatedBy: createdBy } : {}) };
     note.position = workspace.notes.length;
     return { ...workspace, notes: [...workspace.notes, note] };
-  }).then((workspace) => clone(workspace.notes[workspace.notes.length - 1]));
+  }).then((workspace) => {
+    const note = clone(workspace.notes[workspace.notes.length - 1]);
+    return warning ? { ...note, warning } : note;
+  });
 }
 
-export async function updateNoteRecord(noteId: string, input: NoteUpdateInput, context?: McpOperationContext): Promise<Note> {
+export async function updateNoteRecord(noteId: string, input: NoteUpdateInput, context?: McpOperationContext): Promise<NoteMutationResult> {
   const id = textValue(noteId, "Note ID", 200);
+  const expectedUpdatedAt = input.expectedUpdatedAt === undefined
+    ? undefined
+    : textValue(input.expectedUpdatedAt, "expected_updated_at", 64);
+  const warning = secretWarningFor(input.content);
   let updated: Note | undefined;
   const updatedBy = createClientIdentity(context);
   const workspace = await updateWorkspace((current) => {
     const existing = current.notes.find((note) => note.id === id);
     if (!existing) fail("Note not found");
+    if (expectedUpdatedAt !== undefined && existing.updatedAt !== expectedUpdatedAt) {
+      fail("Conflict: note changed since expected_updated_at; refresh and retry");
+    }
     const patch = normalizeNotePatch(input, current, existing);
     updated = { ...existing, ...patch, updatedAt: new Date().toISOString(), ...(updatedBy ? { updatedBy } : {}) };
     return { ...current, notes: current.notes.map((note) => note.id === id ? updated as Note : note) };
   });
-  return clone(updated ?? workspace.notes.find((note) => note.id === id) as Note);
+  const note = clone(updated ?? workspace.notes.find((note) => note.id === id) as Note);
+  return warning ? { ...note, warning } : note;
+}
+
+function appendMarkdownToContent(
+  content: string,
+  markdown: string,
+  underHeading?: string,
+  position: "end" | "top_of_section" = "end",
+): string {
+  const chunk = markdown.replace(/\s+$/u, "");
+  if (!underHeading) {
+    const base = content.replace(/\s+$/u, "");
+    return `${base}${base ? "\n" : ""}${chunk}\n`;
+  }
+  const marker = `## ${underHeading}`;
+  const normalized = content.replace(/\s+$/u, "");
+  if (!normalized.trim()) return `${marker}\n${chunk}\n`;
+  const lines = normalized.split(/\r?\n/);
+  const index = lines.findIndex((entry) => entry.trim() === marker);
+  if (index < 0) return `${normalized}\n\n${marker}\n${chunk}\n`;
+  let sectionEnd = index + 1;
+  while (sectionEnd < lines.length && !/^##\s+/.test(lines[sectionEnd] ?? "")) sectionEnd += 1;
+  const insertAt = position === "top_of_section" ? index + 1 : sectionEnd;
+  lines.splice(insertAt, 0, chunk);
+  return `${lines.join("\n").replace(/\s+$/u, "")}\n`;
+}
+
+export async function appendToNote(input: AppendToNoteInput, context?: McpOperationContext): Promise<NoteMutationResult> {
+  const id = textValue(input.noteId, "Note ID", 200);
+  const markdown = textValue(input.markdown, "Markdown", 100_000);
+  const underHeading = input.underHeading === undefined
+    ? undefined
+    : textValue(input.underHeading, "under_heading", 200);
+  const position = input.position ?? "end";
+  if (position !== "end" && position !== "top_of_section") fail("position must be end or top_of_section");
+  const warning = secretWarningFor(markdown);
+  let updated: Note | undefined;
+  const updatedBy = createClientIdentity(context);
+  const workspace = await updateWorkspace((current) => {
+    const existing = current.notes.find((note) => note.id === id);
+    if (!existing) fail("Note not found");
+    updated = {
+      ...existing,
+      content: appendMarkdownToContent(existing.content, markdown, underHeading, position),
+      updatedAt: new Date().toISOString(),
+      ...(updatedBy ? { updatedBy } : {}),
+    };
+    return { ...current, notes: current.notes.map((note) => note.id === id ? updated as Note : note) };
+  });
+  const note = clone(updated ?? workspace.notes.find((note) => note.id === id) as Note);
+  return warning ? { ...note, warning } : note;
 }
 
 export async function deleteNoteRecord(noteId: string): Promise<{ id: string; deleted: true }> {

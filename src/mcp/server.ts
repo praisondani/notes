@@ -26,6 +26,7 @@ import {
   uploadNoteFile,
   workspaceSummary,
 } from "@/lib/mcp-service";
+import { AGENT_BRAIN_INSTRUCTIONS, mcpPackageVersion } from "@/mcp/agent-brain-instructions";
 
 export type McpServerContext = Pick<McpAuthContext, "tokenId" | "tokenPrefix" | "scopes" | "source" | "clientId" | "clientName" | "label">;
 
@@ -193,7 +194,7 @@ function mapGroupInput(input: GroupInput) {
 }
 
 export function createMcpServer(context: McpServerContext): McpServer {
-  const server = new McpServer({ name: "notes", version: "0.6.4" });
+  const server = new McpServer({ name: "notes", version: mcpPackageVersion() }, { instructions: AGENT_BRAIN_INSTRUCTIONS });
 
   server.registerTool("workspace_summary", {
     title: "Workspace summary",

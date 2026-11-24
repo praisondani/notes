@@ -1,6 +1,7 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -80,6 +81,24 @@ describe("MCP server", () => {
     expect(folder.groupId).toBe(group.id);
     expect(noteResult.isError).not.toBe(true);
     expect(JSON.stringify(deleteResult)).toContain("detachedFolderCount");
+
+    await client.close();
+    await server.close();
+  });
+
+  it("returns agent-brain instructions at initialize with the package version", async () => {
+    const packageJsonPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../package.json");
+    const packageVersion = JSON.parse(await readFile(packageJsonPath, "utf8")).version as string;
+    const { client, server } = await connectServer();
+
+    const instructions = client.getInstructions() ?? "";
+    const serverInfo = client.getServerVersion();
+
+    expect(instructions).toContain("get_agent_context");
+    expect(instructions).toContain("remember");
+    expect(instructions.length).toBeGreaterThan(100);
+    expect(instructions.length).toBeLessThanOrEqual(1_000);
+    expect(serverInfo?.version).toBe(packageVersion);
 
     await client.close();
     await server.close();

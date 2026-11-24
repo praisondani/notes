@@ -1,6 +1,6 @@
 {
   "name": "notes",
-  "version": "0.6.4",
+  "version": "0.6.7",
   "private": false,
   "description": "A minimal, self-hostable private note workspace.",
   "license": "MIT",

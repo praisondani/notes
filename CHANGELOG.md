@@ -2,6 +2,13 @@
 
 All notable changes are documented here.
 
+## [0.6.7] - 2026-11-24
+
+### Added
+
+- MCP initialize now returns shared agent-brain instructions that tell any client to call `get_agent_context` and `remember`.
+- MCP server version is read from `package.json`.
+
 ## [0.6.4] - 2026-11-23
 
 ### Fixed

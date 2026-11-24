@@ -33,7 +33,12 @@ function consentPayload(request: Awaited<ReturnType<typeof getAuthorizationReque
     authenticated: auth.authenticated,
     setupRequired: auth.setupRequired,
     transaction: request.transactionId,
-    client: { name: request.clientName, ...(request.clientUri ? { uri: request.clientUri } : {}) },
+    client: {
+      id: request.clientId,
+      name: request.clientName,
+      ...(request.clientLabel ? { label: request.clientLabel } : {}),
+      ...(request.clientUri ? { uri: request.clientUri } : {}),
+    },
     redirectUri: request.redirectUri,
     scopes: request.scopes,
     expiresAt: request.expiresAt,
@@ -95,6 +100,7 @@ export async function POST(request: Request): Promise<Response> {
     const form = await request.formData();
     const transactionId = typeof form.get("transaction") === "string" ? String(form.get("transaction")).trim() : "";
     const decision = typeof form.get("decision") === "string" ? String(form.get("decision")).trim() : "";
+    const clientLabel = typeof form.get("client_label") === "string" ? String(form.get("client_label")) : undefined;
     if (!transactionId || (decision !== "approve" && decision !== "deny")) throw new OAuthProtocolError("invalid_request", "The authorization decision is invalid.");
     const browserSecret = (await cookies()).get(OAUTH_BROWSER_COOKIE)?.value;
     if (!browserSecret) throw new OAuthProtocolError("invalid_request", "The authorization browser session is missing or expired.");
@@ -102,7 +108,13 @@ export async function POST(request: Request): Promise<Response> {
     if (!pending) throw new OAuthProtocolError("invalid_request", "The authorization request is invalid or expired.");
     const user = await authenticatedUser();
     if (!user) return NextResponse.json({ error: "Authentication required" }, { status: 401, headers: { "Cache-Control": "no-store" } });
-    const completion = await approveAuthorizationRequest(transactionId, browserSecret, user.id, decision === "approve");
+    const completion = await approveAuthorizationRequest(
+      transactionId,
+      browserSecret,
+      user.id,
+      decision === "approve",
+      decision === "approve" ? { clientLabel } : undefined,
+    );
     const redirect = new URL(completion.redirectUri);
     if (completion.code) redirect.searchParams.set("code", completion.code);
     if (completion.error) redirect.searchParams.set("error", completion.error);

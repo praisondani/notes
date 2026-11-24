@@ -10,6 +10,8 @@ import {
   exchangeRefreshToken,
   getAuthorizationRequest,
   listOAuthClients,
+  oauthClientAttributionName,
+  oauthClientDisplayName,
   registerOAuthClient,
   verifyOAuthAccessToken,
 } from "@/lib/mcp-oauth";
@@ -225,5 +227,30 @@ describe("MCP OAuth authorization code flow", () => {
     const refreshExpiry = new Date(clients[0]!.refreshTokenExpiresAt!).getTime();
     const expectedMin = Date.now() + 170 * 24 * 60 * 60 * 1_000;
     expect(refreshExpiry).toBeGreaterThan(expectedMin);
+  });
+
+  it("stores a friendlier consent label and uses it for attribution", async () => {
+    const registration = await registerOAuthClient({
+      clientName: "Cursor",
+      redirectUris: ["http://127.0.0.1:9/callback"],
+      scopes: ["notes:read", "notes:write"],
+    });
+    const pending = await beginAuthorizationRequest({
+      clientId: registration.client.clientId,
+      redirectUri: "http://127.0.0.1:9/callback",
+      codeChallenge: createCodeChallenge(verifier),
+      scopes: ["notes:read"],
+      resource,
+    }, "browser-secret");
+    await approveAuthorizationRequest(pending.transactionId, "browser-secret", "owner", true, {
+      clientLabel: "Cursor on Studio Mac",
+    });
+
+    const clients = await listOAuthClients();
+    const client = clients.find((entry) => entry.clientId === registration.client.clientId);
+    expect(client?.clientLabel).toBe("Cursor on Studio Mac");
+    expect(oauthClientAttributionName(client!)).toBe("Cursor on Studio Mac");
+    expect(oauthClientDisplayName(client!)).toContain(registration.client.clientId.slice(-6));
+    expect(oauthClientDisplayName(client!)).toContain("Cursor on Studio Mac");
   });
 });

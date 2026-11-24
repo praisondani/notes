@@ -403,6 +403,181 @@ export async function getNoteRecord(noteId: string): Promise<Note> {
   return clone(note);
 }
 
+const AGENT_BRAIN_TAG = "agent-brain";
+const AGENT_BRAIN_INDEX_TAG = "index";
+const AGENT_BRIDGE_TAG = "agent-bridge";
+const AGENT_BRAIN_INDEX_TITLE = "agent brain: start here";
+const DEFAULT_AGENT_CONTEXT_CHARS = 12_000;
+const DEFAULT_BRIDGE_ENTRIES = 12;
+
+export type AgentContextOptions = {
+  topic?: string;
+  maxChars?: number;
+  bridgeEntries?: number;
+};
+
+export type AgentContextNote = {
+  id: string;
+  title: string;
+  tags: string[];
+  content: string;
+  updatedAt: string;
+  truncated: boolean;
+};
+
+export type AgentContextResult = {
+  index: AgentContextNote | null;
+  notes: AgentContextNote[];
+  bridge_entries: string[];
+  topic_hits: Array<{ noteId: string; title: string; snippet: string; score: number }>;
+  content: string;
+  truncated: boolean;
+  remaining_note_ids: string[];
+  brain_version: string;
+  updated_at: string;
+  hint?: string;
+};
+
+function noteHasTag(note: Note, tag: string): boolean {
+  return note.tags.some((value) => value.toLocaleLowerCase() === tag);
+}
+
+function findBrainIndex(notes: Note[]): Note | undefined {
+  const tagged = notes.find((note) => !note.archived && noteHasTag(note, AGENT_BRAIN_TAG) && noteHasTag(note, AGENT_BRAIN_INDEX_TAG));
+  if (tagged) return tagged;
+  return notes.find((note) => !note.archived && note.title.trim().toLocaleLowerCase() === AGENT_BRAIN_INDEX_TITLE);
+}
+
+function truncateText(value: string, maxChars: number): { text: string; truncated: boolean } {
+  if (value.length <= maxChars) return { text: value, truncated: false };
+  return { text: value.slice(0, Math.max(0, maxChars - 1)).trimEnd() + "…", truncated: true };
+}
+
+function bridgeEntriesFrom(note: Note | undefined, limit: number): string[] {
+  if (!note) return [];
+  return note.content
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(-limit)
+    .reverse();
+}
+
+export async function getAgentContext(options: AgentContextOptions = {}): Promise<AgentContextResult> {
+  const workspace = await loadWorkspace();
+  const maxChars = options.maxChars === undefined
+    ? DEFAULT_AGENT_CONTEXT_CHARS
+    : boundedInteger(options.maxChars, "Max characters", 100, 50_000);
+  const bridgeLimit = options.bridgeEntries === undefined
+    ? DEFAULT_BRIDGE_ENTRIES
+    : boundedInteger(options.bridgeEntries, "Bridge entries", 1, 100);
+  const topic = normalizeQuery(options.topic ?? "");
+
+  const brainNotes = workspace.notes
+    .filter((note) => !note.archived && noteHasTag(note, AGENT_BRAIN_TAG))
+    .sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime());
+  const index = findBrainIndex(workspace.notes);
+  const bridge = workspace.notes.find((note) => !note.archived && noteHasTag(note, AGENT_BRIDGE_TAG));
+
+  if (!index && brainNotes.length === 0) {
+    return {
+      index: null,
+      notes: [],
+      bridge_entries: bridgeEntriesFrom(bridge, bridgeLimit),
+      topic_hits: [],
+      content: "",
+      truncated: false,
+      remaining_note_ids: [],
+      brain_version: "empty",
+      updated_at: new Date(0).toISOString(),
+      hint: "No agent brain notes yet. Create a pinned note titled \"Agent Brain: start here\" with tags agent-brain and index, then add profile/rules/projects/decisions notes tagged agent-brain.",
+    };
+  }
+
+  const ordered = [
+    ...(index ? [index] : []),
+    ...brainNotes.filter((note) => note.id !== index?.id),
+  ];
+  const included: AgentContextNote[] = [];
+  const remaining_note_ids: string[] = [];
+  let remaining = maxChars;
+  let truncated = false;
+  const blocks: string[] = [];
+
+  for (const note of ordered) {
+    if (remaining <= 0) {
+      remaining_note_ids.push(note.id);
+      truncated = true;
+      continue;
+    }
+    const header = `# ${note.title}\n`;
+    const budget = Math.max(0, remaining - header.length);
+    const body = truncateText(note.content, budget);
+    const content = `${header}${body.text}`.trim();
+    included.push({
+      id: note.id,
+      title: note.title,
+      tags: [...note.tags],
+      content: body.text,
+      updatedAt: note.updatedAt,
+      truncated: body.truncated,
+    });
+    blocks.push(content);
+    remaining -= content.length + 2;
+    if (body.truncated) {
+      truncated = true;
+      remaining_note_ids.push(...ordered.slice(ordered.indexOf(note) + 1).map((candidate) => candidate.id));
+      break;
+    }
+  }
+
+  const topic_hits = topic
+    ? (await ragQuery(topic, { limit: 5, maxContextChars: Math.min(2_000, maxChars) })).results.map((result) => ({
+      noteId: result.noteId,
+      title: result.title,
+      snippet: result.snippet,
+      score: result.score,
+    }))
+    : [];
+
+  if (topic_hits.length && remaining > 0) {
+    const topicBlock = topic_hits
+      .map((hit) => `- ${hit.title}: ${hit.snippet}`)
+      .join("\n");
+    const clipped = truncateText(`## Topic hits\n${topicBlock}`, remaining);
+    blocks.push(clipped.text);
+    remaining -= clipped.text.length;
+    truncated = truncated || clipped.truncated;
+  }
+
+  const bridge_entries = bridgeEntriesFrom(bridge, bridgeLimit);
+  if (bridge_entries.length && remaining > 0) {
+    const bridgeBlock = bridge_entries.map((entry) => `- ${entry}`).join("\n");
+    const clipped = truncateText(`## Bridge\n${bridgeBlock}`, remaining);
+    blocks.push(clipped.text);
+    truncated = truncated || clipped.truncated;
+  }
+
+  const updatedCandidates = [...ordered, ...(bridge ? [bridge] : [])];
+  const updated_at = updatedCandidates
+    .map((note) => note.updatedAt)
+    .sort()
+    .at(-1) ?? new Date(0).toISOString();
+  const brain_version = `${updatedCandidates.length}:${updated_at}`;
+
+  return {
+    index: included.find((note) => note.id === index?.id) ?? null,
+    notes: included,
+    bridge_entries,
+    topic_hits,
+    content: blocks.join("\n\n").slice(0, maxChars),
+    truncated,
+    remaining_note_ids: [...new Set(remaining_note_ids)],
+    brain_version,
+    updated_at,
+  };
+}
+
 export async function createNoteRecord(input: NoteCreateInput = {}, context?: McpOperationContext): Promise<Note> {
   return updateWorkspace((workspace) => {
     const patch = normalizeNotePatch(input, workspace);

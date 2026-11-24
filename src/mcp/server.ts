@@ -10,6 +10,7 @@ import {
   deleteFolderRecord,
   deleteGroupRecord,
   deleteNoteRecord,
+  getAgentContext,
   getNoteRecord,
   getWorkspaceSnapshot,
   listFolders,
@@ -127,6 +128,11 @@ const uploadFileInputSchema = z.object({
   add_attachment: z.boolean().optional(),
   append_markdown: z.boolean().optional(),
 });
+const agentContextInputSchema = z.object({
+  topic: z.string().max(500).optional(),
+  max_chars: z.number().int().min(100).max(50_000).optional(),
+  bridge_entries: z.number().int().min(1).max(100).optional(),
+});
 
 type NoteToolInput = z.infer<typeof noteInputSchema>;
 type UpdateNoteToolInput = z.infer<typeof updateNoteInputSchema>;
@@ -202,6 +208,17 @@ export function createMcpServer(context: McpServerContext): McpServer {
     inputSchema: z.object({}),
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, async () => execute(context, "notes:read", workspaceSummary));
+
+  server.registerTool("get_agent_context", {
+    title: "Get agent context",
+    description: "Return the shared agent-brain bundle for this workspace: index note, other agent-brain notes, recent bridge entries, and optional topic hits. Call once per session before asking the user to repeat lasting context.",
+    inputSchema: agentContextInputSchema,
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  }, async (input: { topic?: string; max_chars?: number; bridge_entries?: number }) => execute(context, "notes:read", () => getAgentContext({
+    topic: input.topic,
+    maxChars: input.max_chars,
+    bridgeEntries: input.bridge_entries,
+  })));
 
   server.registerTool("list_notes", {
     title: "List notes",
@@ -397,6 +414,37 @@ export function createMcpServer(context: McpServerContext): McpServer {
   }, async (uri) => {
     if (!hasMcpScope(context, "notes:read")) throw new McpPermissionError("notes:read");
     return { contents: [{ uri: uri.toString(), mimeType: "application/json", text: JSON.stringify(await getWorkspaceSnapshot()) }] };
+  });
+
+  server.registerResource("brain", "notes://brain", {
+    title: "Agent brain",
+    description: "Bounded shared agent-brain context for the authenticated workspace.",
+    mimeType: "application/json",
+  }, async (uri) => {
+    if (!hasMcpScope(context, "notes:read")) throw new McpPermissionError("notes:read");
+    return { contents: [{ uri: uri.toString(), mimeType: "application/json", text: JSON.stringify(await getAgentContext()) }] };
+  });
+
+  server.registerPrompt("start_session", {
+    title: "Start session",
+    description: "Load the shared agent brain before starting work that depends on the user or their projects.",
+    argsSchema: {
+      topic: z.string().max(500).optional(),
+    },
+  }, async ({ topic }) => {
+    if (!hasMcpScope(context, "notes:read")) throw new McpPermissionError("notes:read");
+    const brain = await getAgentContext({ topic });
+    return {
+      messages: [{
+        role: "user" as const,
+        content: {
+          type: "text" as const,
+          text: brain.hint
+            ? brain.hint
+            : `Shared Notes brain context:\n\n${brain.content}\n\nUse this before asking the user to repeat lasting facts. Fetch remaining note ids if truncated: ${brain.remaining_note_ids.join(", ") || "none"}.`,
+        },
+      }],
+    };
   });
 
   server.registerResource("note", new ResourceTemplate("notes://notes/{noteId}", {

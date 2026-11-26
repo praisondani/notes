@@ -11,7 +11,7 @@ import {
   OAuthProtocolError,
   parseOAuthScopeString,
 } from "@/lib/mcp-oauth";
-import { consumeOAuthRateLimit, oauthErrorResponse, oauthRateLimitResponse } from "@/lib/mcp-oauth-http";
+import { consumeOAuthRateLimit, formBody, oauthErrorResponse, oauthRateLimitResponse } from "@/lib/mcp-oauth-http";
 
 const browserCookieOptions = {
   httpOnly: true,
@@ -97,10 +97,10 @@ export async function POST(request: Request): Promise<Response> {
   const rate = consumeOAuthRateLimit(request, "authorize-decision", 60);
   if (!rate.allowed) return oauthRateLimitResponse(rate.retryAfter);
   try {
-    const form = await request.formData();
-    const transactionId = typeof form.get("transaction") === "string" ? String(form.get("transaction")).trim() : "";
-    const decision = typeof form.get("decision") === "string" ? String(form.get("decision")).trim() : "";
-    const clientLabel = typeof form.get("client_label") === "string" ? String(form.get("client_label")) : undefined;
+    const form = await formBody(request);
+    const transactionId = form.get("transaction")?.trim() ?? "";
+    const decision = form.get("decision")?.trim() ?? "";
+    const clientLabel = form.get("client_label") ?? undefined;
     if (!transactionId || (decision !== "approve" && decision !== "deny")) throw new OAuthProtocolError("invalid_request", "The authorization decision is invalid.");
     const browserSecret = (await cookies()).get(OAUTH_BROWSER_COOKIE)?.value;
     if (!browserSecret) throw new OAuthProtocolError("invalid_request", "The authorization browser session is missing or expired.");

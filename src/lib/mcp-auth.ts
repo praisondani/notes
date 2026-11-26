@@ -1,5 +1,5 @@
 import { createHash, timingSafeEqual } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { chmod, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { mcpResourceUrl, verifyOAuthAccessToken } from "@/lib/mcp-oauth";
 import { MCP_SCOPES, normalizeMcpScopes, type McpScope } from "@/lib/mcp-scopes";
@@ -41,6 +41,7 @@ export type McpAuthResult =
 const DEFAULT_TOKEN_SCOPES: McpScope[] = ["notes:read"];
 const TOKEN_FILE_NAME = "mcp-tokens.json";
 const MAX_TOKEN_LENGTH = 2_048;
+const MAX_RATE_BUCKETS = 10_000;
 
 function dataDirectory(): string {
   return path.resolve(/* turbopackIgnore: true */ process.env.DATA_DIR?.trim() || path.join(process.cwd(), "data"));
@@ -48,6 +49,12 @@ function dataDirectory(): string {
 
 function tokenFilePath(): string {
   return path.join(dataDirectory(), TOKEN_FILE_NAME);
+}
+
+async function secureDataDirectory(): Promise<void> {
+  const directory = dataDirectory();
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  if (directory !== path.parse(directory).root) await chmod(directory, 0o700);
 }
 
 function parseScopes(value: string | undefined, fallback: McpScope[]): McpScope[] {
@@ -88,7 +95,10 @@ function validStoredToken(value: unknown): value is StoredMcpToken {
 
 async function loadStoredTokens(): Promise<StoredMcpToken[]> {
   try {
-    const raw = await readFile(tokenFilePath(), "utf8");
+    const filename = tokenFilePath();
+    const raw = await readFile(filename, "utf8");
+    await secureDataDirectory();
+    await chmod(filename, 0o600);
     const parsed = JSON.parse(raw) as { version?: number; tokens?: unknown };
     if (parsed.version !== 1 || !Array.isArray(parsed.tokens)) throw new Error("Invalid MCP token store");
     return parsed.tokens.filter(validStoredToken);
@@ -167,10 +177,18 @@ function rateLimitPerMinute(): number {
 }
 
 export function consumeMcpRateLimit(context: McpAuthContext, now = Date.now()): { allowed: true } | { allowed: false; retryAfter: number } {
+  for (const [bucket, value] of rateBuckets) {
+    if (now - value.startedAt >= 60_000) rateBuckets.delete(bucket);
+  }
   const key = `${context.source}:${context.tokenId}`;
   const current = rateBuckets.get(key);
   if (!current || now - current.startedAt >= 60_000) {
     rateBuckets.set(key, { startedAt: now, count: 1 });
+    while (rateBuckets.size > MAX_RATE_BUCKETS) {
+      const oldest = rateBuckets.keys().next().value;
+      if (oldest === undefined) break;
+      rateBuckets.delete(oldest);
+    }
     return { allowed: true };
   }
   if (current.count >= rateLimitPerMinute()) {

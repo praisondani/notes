@@ -12,7 +12,11 @@ describe("NotesApp keyboard parity", () => {
 
   beforeEach(() => {
     vi.restoreAllMocks();
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => cloneSeed() }));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: (name: string) => name.toLowerCase() === "etag" ? `"${"a".repeat(64)}"` : null },
+      json: async () => cloneSeed(),
+    }));
     window.localStorage.clear();
   });
 
@@ -50,6 +54,60 @@ describe("NotesApp keyboard parity", () => {
     const firstNote = await screen.findByRole("option", { name: /A quieter place for your notes/ });
     fireEvent.keyDown(firstNote, { key: "ArrowDown" });
     expect(await screen.findByDisplayValue("Weekly review")).toBeInTheDocument();
+  });
+
+  it("moves selection and focus with Home and End", async () => {
+    render(<NotesApp />);
+    const firstNote = await screen.findByRole("option", { name: /A quieter place for your notes/ });
+    fireEvent.keyDown(firstNote, { key: "End" });
+    const noteList = within(screen.getByRole("listbox", { name: "Note list" }));
+    const lastNote = noteList.getAllByRole("option").at(-1)!;
+    await waitFor(() => expect(lastNote).toHaveFocus());
+    expect(lastNote).toHaveAttribute("aria-selected", "true");
+
+    fireEvent.keyDown(lastNote, { key: "Home" });
+    await waitFor(() => expect(firstNote).toHaveFocus());
+    expect(firstNote).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("keeps a pending edit local and stops retrying after a workspace conflict", async () => {
+    const fetchMock = vi.fn().mockImplementation((_url: string, options?: RequestInit) => Promise.resolve(options?.method === "PUT"
+      ? { ok: false, status: 412, headers: { get: () => null } }
+      : {
+          ok: true,
+          status: 200,
+          headers: { get: (name: string) => name.toLowerCase() === "etag" ? `"${"b".repeat(64)}"` : null },
+          json: async () => cloneSeed(),
+        }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<NotesApp />);
+    const title = await screen.findByDisplayValue("A quieter place for your notes");
+    fireEvent.change(title, { target: { value: "Pending local edit" } });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Workspace changed elsewhere");
+    expect(title).toHaveValue("Pending local edit");
+    fireEvent.change(title, { target: { value: "Still local" } });
+    await new Promise((resolve) => window.setTimeout(resolve, 450));
+
+    expect(fetchMock.mock.calls.filter(([, options]) => options?.method === "PUT")).toHaveLength(1);
+    expect(title).toHaveValue("Still local");
+  });
+
+  it("explains the workspace size limit and preserves edits after a 413 response", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((_url: string, options?: RequestInit) => Promise.resolve(options?.method === "PUT"
+      ? { ok: false, status: 413, headers: { get: () => null } }
+      : {
+          ok: true,
+          status: 200,
+          headers: { get: (name: string) => name.toLowerCase() === "etag" ? `"${"c".repeat(64)}"` : null },
+          json: async () => cloneSeed(),
+        })));
+    render(<NotesApp />);
+    const title = await screen.findByDisplayValue("A quieter place for your notes");
+    fireEvent.change(title, { target: { value: "Oversized workspace edit" } });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Workspace exceeds the 16 MB save limit");
+    expect(title).toHaveValue("Oversized workspace edit");
   });
 
   it("removes an untouched draft and derives its title when leaving it", async () => {

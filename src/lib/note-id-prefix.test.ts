@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createNoteRecord, getNoteRecord } from "@/lib/mcp-service";
-import { saveWorkspace, updateWorkspace } from "@/lib/workspace-store";
+import { loadWorkspaceSnapshot, saveWorkspace, updateWorkspace } from "@/lib/workspace-store";
 import type { Note } from "@/lib/types";
 
 let dataDirectory = "";
@@ -11,7 +11,8 @@ let dataDirectory = "";
 beforeEach(async () => {
   dataDirectory = await mkdtemp(path.join(os.tmpdir(), "notes-id-prefix-"));
   process.env.DATA_DIR = dataDirectory;
-  await saveWorkspace({ version: 1, notes: [], folders: [], groups: [] });
+  const initial = await loadWorkspaceSnapshot();
+  await saveWorkspace({ version: 1, notes: [], folders: [], groups: [] }, initial.revision);
 });
 
 afterEach(async () => {

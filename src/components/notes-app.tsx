@@ -55,7 +55,7 @@ import { applyTheme, readThemePreference, resolveDarkTheme, setThemePreference a
 import { cn, formatBytes, formatDate } from "@/lib/utils";
 
 type MobilePane = "sidebar" | "list" | "editor";
-type SaveState = "saved" | "saving" | "error";
+type SaveState = "saved" | "saving" | "error" | "conflict" | "too-large";
 type CollectionKind = "folder" | "group";
 type CollectionTarget = { kind: CollectionKind; id: string };
 type CollectionRenameSurface = "sidebar" | "title";
@@ -208,6 +208,10 @@ export function NotesApp() {
   const contentEditorRef = useRef<HTMLTextAreaElement>(null);
   const collectionRenameRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const workspaceRevisionRef = useRef<string | null>(null);
+  const savedWorkspaceRef = useRef<Workspace | null>(null);
+  const workspaceSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const workspaceConflictRef = useRef(false);
 
   const selectedNote = workspace.notes.find((note) => note.id === selectedNoteId) ?? null;
   const filteredNotes = useMemo(() => filterNotes(workspace.notes, query), [workspace.notes, query]);
@@ -227,14 +231,58 @@ export function NotesApp() {
         ? "Archive"
         : "All notes";
 
-  async function persistWorkspace(nextWorkspace: Workspace) {
-    setSaveState("saving");
-    try {
-      const response = await fetch("/api/workspace", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(nextWorkspace) });
-      if (!response.ok) throw new Error("Workspace could not be saved");
-      setSaveState("saved");
-    } catch {
-      setSaveState("error");
+  function persistWorkspace(nextWorkspace: Workspace): Promise<void> {
+    const save = async () => {
+      if (workspaceConflictRef.current) return;
+      const revision = workspaceRevisionRef.current;
+      if (!revision) {
+        setSaveState("error");
+        return;
+      }
+      setSaveState("saving");
+      try {
+        const response = await fetch("/api/workspace", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json", "If-Match": revision },
+          body: JSON.stringify(nextWorkspace),
+        });
+        if (response.status === 412) {
+          workspaceConflictRef.current = true;
+          setSaveState("conflict");
+          return;
+        }
+        if (response.status === 413) {
+          setSaveState("too-large");
+          return;
+        }
+        if (!response.ok) throw new Error("Workspace could not be saved");
+        const nextRevision = response.headers.get("ETag");
+        if (!nextRevision) throw new Error("Workspace revision was missing");
+        workspaceRevisionRef.current = nextRevision;
+        savedWorkspaceRef.current = nextWorkspace;
+        setSaveState("saved");
+      } catch {
+        setSaveState("error");
+      }
+    };
+    const queuedSave = workspaceSaveQueueRef.current.then(save, save);
+    workspaceSaveQueueRef.current = queuedSave;
+    return queuedSave;
+  }
+
+  function downloadUnsavedWorkspace() {
+    const blob = new Blob([JSON.stringify(workspace, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `notes-unsaved-${new Date().toISOString().slice(0, 10)}.json`;
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+  }
+
+  function reloadLatestWorkspace() {
+    if (window.confirm("Reload the saved workspace and discard the unsaved copy in this tab? Download it first if you need to keep those edits.")) {
+      window.location.reload();
     }
   }
 
@@ -293,19 +341,23 @@ export function NotesApp() {
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/workspace")
+    fetch("/api/workspace", { cache: "no-store" })
       .then(async (response) => {
         if (response.status === 401) {
           if (!cancelled) setAuthRequired(true);
           return null;
         }
         if (!response.ok) throw new Error("Workspace could not be loaded");
-        return response.json() as Promise<Workspace>;
+        const revision = response.headers.get("ETag");
+        if (!revision) throw new Error("Workspace revision is missing");
+        return { workspace: await response.json() as Workspace, revision };
       })
-      .then((remote) => {
-        if (cancelled || !remote) return;
-        setWorkspace(remote);
-        setSelectedNoteId((current) => remote.notes.some((note) => note.id === current) ? current : remote.notes[0]?.id ?? null);
+      .then((snapshot) => {
+        if (cancelled || !snapshot) return;
+        workspaceRevisionRef.current = snapshot.revision;
+        savedWorkspaceRef.current = snapshot.workspace;
+        setWorkspace(snapshot.workspace);
+        setSelectedNoteId((current) => snapshot.workspace.notes.some((note) => note.id === current) ? current : snapshot.workspace.notes[0]?.id ?? null);
         setHydrated(true);
       })
       .catch(() => {
@@ -321,7 +373,7 @@ export function NotesApp() {
   }, []);
 
   useEffect(() => {
-    if (!hydrated) return;
+    if (!hydrated || workspace === savedWorkspaceRef.current) return;
     const timeout = window.setTimeout(() => {
       void persistWorkspace(workspace);
     }, 350);
@@ -686,6 +738,11 @@ export function NotesApp() {
     window.setTimeout(() => document.querySelector<HTMLButtonElement>(`[data-note-id="${next.id}"]`)?.focus(), 0);
   }
 
+  function focusNote(noteId: string) {
+    selectNote(noteId);
+    window.setTimeout(() => document.querySelector<HTMLButtonElement>(`[data-note-id="${noteId}"]`)?.focus(), 0);
+  }
+
   function handleNoteKeyDown(event: React.KeyboardEvent<HTMLButtonElement>) {
     if (event.key === "ArrowDown") {
       event.preventDefault();
@@ -695,10 +752,10 @@ export function NotesApp() {
       navigateNotes(-1);
     } else if (event.key === "Home") {
       event.preventDefault();
-      if (filteredNotes[0]) selectNote(filteredNotes[0].id);
+      if (filteredNotes[0]) focusNote(filteredNotes[0].id);
     } else if (event.key === "End") {
       event.preventDefault();
-      if (filteredNotes.at(-1)) selectNote(filteredNotes.at(-1)!.id);
+      if (filteredNotes.at(-1)) focusNote(filteredNotes.at(-1)!.id);
     }
   }
 
@@ -993,7 +1050,7 @@ export function NotesApp() {
 
           <section className="editor" aria-label="Note editor">
             <div className="editor-header">
-              <div className="editor-meta"><Button variant="ghost" size="icon-sm" className="mobile-only" aria-label="Back to notes" onClick={() => { leaveSelectedNote(null); setMobilePane("list"); }}><ArrowLeft className="h-4 w-4" /></Button>{renderBreadcrumbs(selectedNote?.folderId ?? null, selectedNote?.groupId ?? null, selectedNote?.archived ? "archived" : "inbox", "editor")}{saveState === "saving" && <span>Saving…</span>}{saveState === "saved" && <span>Saved</span>}{saveState === "error" && <span className="text-destructive">Save error</span>}</div>
+              <div className="editor-meta"><Button variant="ghost" size="icon-sm" className="mobile-only" aria-label="Back to notes" onClick={() => { leaveSelectedNote(null); setMobilePane("list"); }}><ArrowLeft className="h-4 w-4" /></Button>{renderBreadcrumbs(selectedNote?.folderId ?? null, selectedNote?.groupId ?? null, selectedNote?.archived ? "archived" : "inbox", "editor")}{saveState === "saving" && <span role="status">Saving…</span>}{saveState === "saved" && <span role="status">Saved</span>}{saveState === "error" && <span role="alert" className="text-destructive">Save error. Check your connection and try again.</span>}{saveState === "too-large" && <span role="alert" className="text-destructive">Workspace exceeds the 16 MB save limit. Your edits are still here. <button type="button" className="underline" onClick={downloadUnsavedWorkspace}>Download my edits</button></span>}{saveState === "conflict" && <span role="alert" className="text-destructive">Workspace changed elsewhere. Your unsaved edits are still here. <button type="button" className="underline" onClick={downloadUnsavedWorkspace}>Download my edits</button> <button type="button" className="underline" onClick={reloadLatestWorkspace}>Load saved workspace</button></span>}</div>
               <div className="toolbar-actions">
                 {selectedNote && <Tooltip><TooltipTrigger asChild><Button variant="ghost" size="icon-sm" aria-label={markdownPreview ? "Edit" : "Preview"} onClick={() => setMarkdownPreview(!markdownPreview)}>{markdownPreview ? <Pencil className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</Button></TooltipTrigger><TooltipContent>{markdownPreview ? "Edit" : "Preview"}</TooltipContent></Tooltip>}
                 {selectedNote && <Tooltip><TooltipTrigger asChild><Button variant="ghost" size="icon-sm" aria-label={selectedNote.pinned ? "Unpin note" : "Pin note"} onClick={() => setWorkspace((current) => ({ ...current, notes: togglePinned(current.notes, selectedNote.id) }))}>{selectedNote.pinned ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}</Button></TooltipTrigger><TooltipContent>{selectedNote.pinned ? "Unpin note" : "Pin note"}</TooltipContent></Tooltip>}

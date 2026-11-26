@@ -13,9 +13,15 @@ export type AuthStatus = {
   user?: AuthUser;
 };
 
+export function isAuthConfigurationReady(): boolean {
+  const configured = process.env.AUTH_SECRET?.trim();
+  return process.env.NODE_ENV !== "production"
+    || Boolean(configured && configured !== "replace-with-a-long-random-string" && Buffer.byteLength(configured, "utf8") >= 32);
+}
+
 function authSecret(): string {
   const configured = process.env.AUTH_SECRET?.trim();
-  if (configured && configured !== "replace-with-a-long-random-string") return configured;
+  if (configured && configured !== "replace-with-a-long-random-string" && (process.env.NODE_ENV !== "production" || Buffer.byteLength(configured, "utf8") >= 32)) return configured;
   if (process.env.NODE_ENV === "production") throw new Error("AUTH_SECRET must be configured with a long random value");
   return "notes-development-secret";
 }

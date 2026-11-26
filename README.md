@@ -65,13 +65,14 @@ Copy `.env.example` to `.env`.
 - `DATA_DIR`: local workspace and upload path. Defaults to `./data`.
 - `AUTH_USERNAME`, `AUTH_EMAIL`: optional values used for the first-run owner account or legacy password migration.
 - `AUTH_PASSWORD`: legacy bootstrap password. If `data/auth.json` does not exist, Notes migrates this value once into a salted password hash. New installs can create the owner account in the browser instead.
-- `AUTH_SECRET`: long random value used to sign session cookies. Required in production.
+- `AUTH_SECRET`: random value of at least 32 bytes used to sign session cookies. Required in production.
 - `MCP_RESOURCE_URL`: optional canonical MCP resource URL. Defaults to `${APP_URL}/api/mcp`; leave empty for normal installs.
 - `MCP_ACCESS_TOKEN`: optional legacy bearer token for HTTP MCP. OAuth clients do not need this value.
 - `MCP_ACCESS_TOKEN_SCOPES`: comma-separated scopes for the environment token. Use `notes:read` for read-only access or add `notes:write` for CRUD.
 - `MCP_ALLOWED_HOSTS`: exact `Host` values accepted by the MCP endpoint. Set this to the public hostname and port used by your reverse proxy; HTTP MCP fails closed if this and `APP_URL` are both missing.
 - `MCP_ALLOWED_ORIGINS`: exact browser origins allowed to call MCP. Leave empty for native agent clients without browser CORS.
 - `MCP_RATE_LIMIT_PER_MINUTE`: per-token in-memory request limit. Keep a reverse-proxy limit in front of public deployments.
+- `TRUST_PROXY_HEADERS`: set to `1` only when the reverse proxy overwrites `X-Real-IP` or `X-Forwarded-For`. Leave it at `0` when the application is directly reachable or the proxy preserves client-supplied values. Login throttling uses these addresses; without trusted proxy headers, configure login and OAuth rate limits at the reverse proxy.
 - `S3_ENDPOINT`: any S3-compatible endpoint. For Cloudflare R2, use `https://<ACCOUNT_ID>.r2.cloudflarestorage.com`.
 - `S3_REGION`: use `auto` for R2.
 - `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`: object storage credentials.

@@ -124,4 +124,4 @@ jobs:
 
       - name: Verify public Notes endpoint
         if: inputs.release_tag != ''
-        run: curl --fail --silent --show-error --location --retry 12 --retry-delay 5 --retry-max-time 90 --max-time 20 https://notes.cdir.io/ -o /dev/null
+        run: curl --fail --silent --show-error --location --retry 12 --retry-delay 5 --retry-max-time 90 --max-time 20 https://notes.cdir.io/api/health -o /dev/null

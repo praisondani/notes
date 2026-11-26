@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 import { getOAuthClientRecord, OAuthProtocolError, verifyOAuthClientSecret } from "@/lib/mcp-oauth";
+import { readRequestBytes, RequestBodyError } from "@/lib/request-body";
+import { clientAddress } from "@/lib/client-address";
 
 const RATE_WINDOW_MS = 60 * 1_000;
+const MAX_RATE_KEYS = 10_000;
 const rateBuckets = new Map<string, { startedAt: number; count: number }>();
 
 export type OAuthClientCredentials = {
@@ -9,20 +12,28 @@ export type OAuthClientCredentials = {
   clientSecret?: string;
 };
 
-function clientAddress(request: Request): string {
-  return request.headers.get("x-real-ip")?.trim() || request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
-}
-
 export function consumeOAuthRateLimit(request: Request, bucket: string, maximum = 60, now = Date.now()): { allowed: true } | { allowed: false; retryAfter: number } {
+  for (const [existingKey, value] of rateBuckets) {
+    if (now - value.startedAt >= RATE_WINDOW_MS) rateBuckets.delete(existingKey);
+  }
   const key = `${bucket}:${clientAddress(request)}`;
   const current = rateBuckets.get(key);
   if (!current || now - current.startedAt >= RATE_WINDOW_MS) {
     rateBuckets.set(key, { startedAt: now, count: 1 });
+    trimRateBuckets();
     return { allowed: true };
   }
   if (current.count >= maximum) return { allowed: false, retryAfter: Math.max(1, Math.ceil((RATE_WINDOW_MS - (now - current.startedAt)) / 1_000)) };
   current.count += 1;
   return { allowed: true };
+}
+
+function trimRateBuckets(): void {
+  while (rateBuckets.size > MAX_RATE_KEYS) {
+    const oldest = rateBuckets.keys().next().value;
+    if (oldest === undefined) break;
+    rateBuckets.delete(oldest);
+  }
 }
 
 function protocolError(code: OAuthProtocolError["code"], message: string): OAuthProtocolError {
@@ -63,6 +74,12 @@ export async function authenticateOAuthClient(request: Request, form: URLSearchP
 }
 
 export function oauthErrorResponse(error: unknown): Response {
+  if (error instanceof RequestBodyError) {
+    const response = NextResponse.json({ error: "invalid_request", error_description: error.message }, { status: error.status });
+    response.headers.set("Cache-Control", "no-store");
+    response.headers.set("Pragma", "no-cache");
+    return response;
+  }
   const oauthError = error instanceof OAuthProtocolError
     ? error
     : new OAuthProtocolError("invalid_request", "The OAuth request could not be processed.");
@@ -93,9 +110,18 @@ export async function formBody(request: Request): Promise<URLSearchParams> {
   if (contentType !== "application/x-www-form-urlencoded") {
     throw protocolError("invalid_request", "OAuth requests must use application/x-www-form-urlencoded.");
   }
-  const contentLength = Number(request.headers.get("content-length") ?? "0");
-  if (contentLength > 16 * 1024) throw protocolError("invalid_request", "The OAuth request is too large.");
-  const body = await request.text();
-  if (body.length > 16 * 1024) throw protocolError("invalid_request", "The OAuth request is too large.");
+  let bytes: ArrayBuffer;
+  try {
+    bytes = await readRequestBytes(request, 16 * 1024);
+  } catch (error) {
+    if (error instanceof RequestBodyError) throw error;
+    throw protocolError("invalid_request", "The OAuth request body is invalid.");
+  }
+  let body: string;
+  try {
+    body = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    throw protocolError("invalid_request", "The OAuth request body is invalid.");
+  }
   return new URLSearchParams(body);
 }

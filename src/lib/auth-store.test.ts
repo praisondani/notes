@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { chmod, mkdtemp, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -53,5 +53,19 @@ describe("auth store", () => {
     await saveAuthState({ ...migrated!, sessionVersion: migrated!.sessionVersion + 1 });
     const loaded = await loadAuthState();
     expect(loaded?.sessionVersion).toBe(2);
+  });
+
+  it("tightens permissions on legacy auth files when loaded", async () => {
+    const state = await createAuthState({ username: "owner", email: "owner@notes.test", password: "correct horse battery staple" });
+    await saveAuthState(state);
+    await chmod(dataDirectory, 0o755);
+    await chmod(path.join(dataDirectory, "auth.json"), 0o644);
+
+    await loadAuthState();
+
+    const directoryMode = (await stat(dataDirectory)).mode & 0o777;
+    const authFileMode = (await stat(path.join(dataDirectory, "auth.json"))).mode & 0o777;
+    expect(directoryMode).toBe(0o700);
+    expect(authFileMode).toBe(0o600);
   });
 });

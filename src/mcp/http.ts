@@ -2,6 +2,9 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import { authenticateMcpRequest, consumeMcpRateLimit } from "@/lib/mcp-auth";
 import { buildMcpWwwAuthenticate } from "@/lib/mcp-oauth";
 import { createMcpServer } from "@/mcp/server";
+import { readRequestBytes, RequestBodyError } from "@/lib/request-body";
+
+const MAX_MCP_REQUEST_BYTES = 12 * 1024 * 1024;
 
 function configuredList(name: string): string[] {
   return [...new Set((process.env[name] ?? "").split(",").map((value) => value.trim()).filter(Boolean))];
@@ -69,6 +72,17 @@ export async function handleMcpRequest(request: Request): Promise<Response> {
     return jsonError("MCP host allowlist is not configured", 503, request, allowedOrigins);
   }
 
+  let boundedRequest = request;
+  if (request.method === "POST") {
+    try {
+      const body = await readRequestBytes(request, MAX_MCP_REQUEST_BYTES);
+      boundedRequest = new Request(request.url, { method: request.method, headers: request.headers, body });
+    } catch (error) {
+      const status = error instanceof RequestBodyError ? error.status : 400;
+      return jsonError(error instanceof Error ? error.message : "Invalid MCP request body", status, request, allowedOrigins);
+    }
+  }
+
   const server = createMcpServer(authentication.context);
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
@@ -80,7 +94,7 @@ export async function handleMcpRequest(request: Request): Promise<Response> {
 
   try {
     await server.connect(transport);
-    return withCors(await transport.handleRequest(request), request, allowedOrigins);
+    return withCors(await transport.handleRequest(boundedRequest), request, allowedOrigins);
   } catch {
     return jsonError("MCP request failed", 500, request, allowedOrigins);
   }

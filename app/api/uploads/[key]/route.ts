@@ -25,7 +25,15 @@ export async function GET(_request: Request, { params }: { params: Promise<{ key
   try {
     const { key } = await params;
     const buffer = await readLocalObject(decodeURIComponent(key));
-    return new NextResponse(new Uint8Array(buffer) as unknown as BodyInit, { headers: { "Content-Type": contentType(key), "Cache-Control": "public, max-age=31536000, immutable" } });
+    const headers = new Headers({
+      "Content-Type": contentType(key),
+      "Cache-Control": "private, no-store",
+      "X-Content-Type-Options": "nosniff",
+    });
+    if (key.toLowerCase().endsWith(".svg")) {
+      headers.set("Content-Security-Policy", "sandbox; default-src 'none'");
+    }
+    return new NextResponse(new Uint8Array(buffer) as unknown as BodyInit, { headers });
   } catch {
     return NextResponse.json({ error: "File not found" }, { status: 404 });
   }

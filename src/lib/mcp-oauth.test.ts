@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { chmod, mkdtemp, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -13,6 +13,7 @@ import {
   oauthClientAttributionName,
   oauthClientDisplayName,
   registerOAuthClient,
+  revokeOAuthClient,
   verifyOAuthAccessToken,
 } from "@/lib/mcp-oauth";
 
@@ -252,5 +253,52 @@ describe("MCP OAuth authorization code flow", () => {
     expect(oauthClientAttributionName(client!)).toBe("Cursor on Studio Mac");
     expect(oauthClientDisplayName(client!)).toContain(registration.client.clientId.slice(-6));
     expect(oauthClientDisplayName(client!)).toContain("Cursor on Studio Mac");
+  });
+
+  it("bounds dynamic client registration and lets revoked clients free capacity", async () => {
+    const storePath = path.join(dataDirectory, "mcp-oauth.json");
+    const { writeFile } = await import("node:fs/promises");
+    const store = {
+      version: 1,
+      clients: Array.from({ length: 500 }, (_, index) => ({ clientId: `client-${index}`, clientName: `Client ${index}`, redirectUris: ["https://client.example/callback"], createdAt: new Date().toISOString(), revokedAt: null })),
+      authorizationCodes: [],
+      accessTokens: [],
+      refreshTokens: [],
+      authorizationRequests: [],
+    };
+    await writeFile(storePath, JSON.stringify(store), "utf8");
+
+    await expect(registerOAuthClient({ clientName: "Overflow", redirectUris: ["https://client.example/callback"] }))
+      .rejects.toThrow(/registration limit/i);
+
+    store.clients[0]!.revokedAt = new Date().toISOString();
+    await writeFile(storePath, JSON.stringify(store), "utf8");
+    const registration = await registerOAuthClient({ clientName: "Approved", redirectUris: ["https://client.example/callback"] });
+    expect(registration.client.clientName).toBe("Approved");
+  });
+
+  it("removes revoked clients and their token records from the persistent store", async () => {
+    const { registration } = await issueTokens(["notes:read"]);
+    expect(await revokeOAuthClient(registration.client.clientId)).toBe(true);
+    const store = JSON.parse(await (await import("node:fs/promises")).readFile(path.join(dataDirectory, "mcp-oauth.json"), "utf8")) as {
+      clients: unknown[];
+      accessTokens: unknown[];
+      refreshTokens: unknown[];
+    };
+    expect(store.clients).toHaveLength(0);
+    expect(store.accessTokens).toHaveLength(0);
+    expect(store.refreshTokens).toHaveLength(0);
+  });
+
+  it("repairs permissions on a legacy OAuth store when loaded", async () => {
+    await registerOAuthClient({ clientName: "Permissions", redirectUris: ["https://client.example/callback"] });
+    const storePath = path.join(dataDirectory, "mcp-oauth.json");
+    await chmod(dataDirectory, 0o755);
+    await chmod(storePath, 0o644);
+
+    await listOAuthClients();
+
+    expect((await stat(dataDirectory)).mode & 0o777).toBe(0o700);
+    expect((await stat(storePath)).mode & 0o777).toBe(0o600);
   });
 });

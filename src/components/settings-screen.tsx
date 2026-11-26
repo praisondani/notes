@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Check, Clipboard, Download, KeyRound, LogOut, Monitor, Moon, ShieldCheck, Sun, Trash2, UserRound, UsersRound } from "lucide-react";
@@ -120,6 +120,25 @@ export function SettingsScreen() {
   function changeTheme(nextPreference: ThemePreference) {
     setThemePreferenceState(nextPreference);
     setDarkMode(saveThemePreference(nextPreference));
+  }
+
+  function handleThemeKeyDown(event: ReactKeyboardEvent<HTMLButtonElement>, preference: ThemePreference) {
+    const preferences: ThemePreference[] = ["light", "dark", "system"];
+    const currentIndex = preferences.indexOf(preference);
+    const nextIndex = event.key === "ArrowRight" || event.key === "ArrowDown"
+      ? (currentIndex + 1) % preferences.length
+      : event.key === "ArrowLeft" || event.key === "ArrowUp"
+        ? (currentIndex - 1 + preferences.length) % preferences.length
+        : event.key === "Home"
+          ? 0
+          : event.key === "End"
+            ? preferences.length - 1
+            : -1;
+    if (nextIndex < 0) return;
+    event.preventDefault();
+    const nextPreference = preferences[nextIndex];
+    changeTheme(nextPreference);
+    event.currentTarget.parentElement?.querySelector<HTMLButtonElement>(`[data-theme-preference="${nextPreference}"]`)?.focus();
   }
 
   async function submitProfile(event: FormEvent<HTMLFormElement>) {
@@ -256,7 +275,7 @@ export function SettingsScreen() {
           <section className="settings-section" id="appearance" aria-labelledby="appearance-heading">
             <div className="settings-section-heading"><div><h2 id="appearance-heading">Appearance</h2><p>Choose the color scheme for this browser. {darkMode ? "Dark theme is active." : "Light theme is active."}</p></div><Sun className="h-5 w-5 text-muted-foreground" /></div>
             <div className="settings-option-grid" role="radiogroup" aria-label="Theme preference">
-              {(["light", "dark", "system"] as ThemePreference[]).map((preference) => <button type="button" role="radio" aria-checked={themePreference === preference} className="settings-option" data-active={themePreference === preference} key={preference} onClick={() => changeTheme(preference)}><span className="settings-option-icon">{preference === "light" ? <Sun className="h-4 w-4" /> : preference === "dark" ? <Moon className="h-4 w-4" /> : <Monitor className="h-4 w-4" />}</span><span><strong>{preference[0].toUpperCase() + preference.slice(1)}</strong><small>{preference === "system" ? "Follow device" : `Always ${preference}`}</small></span>{themePreference === preference && <Check className="ml-auto h-4 w-4 text-primary" />}</button>)}
+              {(["light", "dark", "system"] as ThemePreference[]).map((preference) => <button type="button" role="radio" aria-checked={themePreference === preference} tabIndex={themePreference === preference ? 0 : -1} data-theme-preference={preference} className="settings-option" data-active={themePreference === preference} key={preference} onClick={() => changeTheme(preference)} onKeyDown={(event) => handleThemeKeyDown(event, preference)}><span className="settings-option-icon">{preference === "light" ? <Sun className="h-4 w-4" /> : preference === "dark" ? <Moon className="h-4 w-4" /> : <Monitor className="h-4 w-4" />}</span><span><strong>{preference[0].toUpperCase() + preference.slice(1)}</strong><small>{preference === "system" ? "Follow device" : `Always ${preference}`}</small></span>{themePreference === preference && <Check className="ml-auto h-4 w-4 text-primary" />}</button>)}
             </div>
           </section>
 

@@ -1,5 +1,6 @@
 import { parseOAuthScopeString, registerOAuthClient, OAuthProtocolError, type OAuthTokenEndpointAuthMethod } from "@/lib/mcp-oauth";
 import { consumeOAuthRateLimit, oauthErrorResponse, oauthRateLimitResponse, oauthSuccessResponse } from "@/lib/mcp-oauth-http";
+import { readJsonBody } from "@/lib/request-body";
 
 function requestedAuthMethod(value: unknown): OAuthTokenEndpointAuthMethod | undefined {
   if (value === undefined) return undefined;
@@ -21,9 +22,11 @@ export async function POST(request: Request): Promise<Response> {
   try {
     const contentType = request.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
     if (contentType !== "application/json") throw new OAuthProtocolError("invalid_request", "Dynamic client registration requires application/json.");
-    const contentLength = Number(request.headers.get("content-length") ?? "0");
-    if (contentLength > 64 * 1024) throw new OAuthProtocolError("invalid_request", "The registration payload is too large.");
-    const body = await request.json().catch(() => { throw new OAuthProtocolError("invalid_request", "The registration payload is invalid."); }) as Record<string, unknown>;
+    const parsedBody = await readJsonBody(request, 64 * 1024);
+    if (!parsedBody || typeof parsedBody !== "object" || Array.isArray(parsedBody)) {
+      throw new OAuthProtocolError("invalid_request", "The registration payload must be a JSON object.");
+    }
+    const body = parsedBody as Record<string, unknown>;
     let scopes;
     try {
       scopes = typeof body.scope === "string" ? parseOAuthScopeString(body.scope) : undefined;

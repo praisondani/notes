@@ -9,6 +9,14 @@ const AUTHORIZATION_REQUEST_TTL_MS = 10 * 60 * 1_000;
 const DEFAULT_ACCESS_TOKEN_TTL_SECONDS = 60 * 60;
 const DEFAULT_REFRESH_TOKEN_TTL_DAYS = 180;
 const MAX_REDIRECT_URIS = 10;
+const MAX_REGISTERED_CLIENTS = 500;
+const MAX_PENDING_AUTHORIZATION_REQUESTS = 1_000;
+const MAX_AUTHORIZATION_CODES = 5_000;
+const MAX_ACTIVE_ACCESS_TOKENS = 5_000;
+const MAX_ACTIVE_REFRESH_TOKENS = 5_000;
+const MAX_REVOKED_TOKEN_HISTORY = 5_000;
+const REVOKED_TOKEN_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
+const UNUSED_CLIENT_TTL_MS = 60 * 60 * 1_000;
 
 function readPositiveInt(value: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(value ?? "", 10);
@@ -212,6 +220,12 @@ function storePath(): string {
   return path.join(dataDirectory(), "mcp-oauth.json");
 }
 
+async function secureDataDirectory(): Promise<void> {
+  const directory = dataDirectory();
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  if (directory !== path.parse(directory).root) await chmod(directory, 0o700);
+}
+
 function emptyStore(): OAuthStore {
   return {
     version: STORE_VERSION,
@@ -234,7 +248,11 @@ function isStore(value: unknown): value is OAuthStore {
 
 async function readStore(): Promise<OAuthStore> {
   try {
-    const parsed = JSON.parse(await readFile(storePath(), "utf8")) as unknown;
+    const filename = storePath();
+    const raw = await readFile(filename, "utf8");
+    await secureDataDirectory();
+    await chmod(filename, 0o600);
+    const parsed = JSON.parse(raw) as unknown;
     if (!isStore(parsed)) throw new Error("Invalid MCP OAuth store");
     return parsed;
   } catch (error) {
@@ -250,9 +268,8 @@ async function readStoreForMutation(): Promise<OAuthStore> {
 }
 
 async function writeStore(store: OAuthStore): Promise<void> {
-  const directory = dataDirectory();
   const filename = storePath();
-  await mkdir(directory, { recursive: true, mode: 0o700 });
+  await secureDataDirectory();
   const temporary = `${filename}.${process.pid}.${randomUUID()}.tmp`;
   await writeFile(temporary, `${JSON.stringify(store, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
   await chmod(temporary, 0o600);
@@ -265,7 +282,9 @@ let queuedMutation: Promise<unknown> = Promise.resolve();
 function withMutation<T>(operation: (store: OAuthStore) => Promise<T> | T): Promise<T> {
   const next = queuedMutation.then(async () => {
     const store = await readStoreForMutation();
+    pruneOAuthStore(store);
     const result = await operation(store);
+    pruneOAuthStore(store);
     await writeStore(store);
     return result;
   });
@@ -501,6 +520,36 @@ function healRefreshTokenScopes(store: OAuthStore): boolean {
   return true;
 }
 
+function pruneOAuthStore(store: OAuthStore, now = Date.now()): void {
+  const retainRevoked = (revokedAt: string | null | undefined) => Boolean(revokedAt && Date.parse(revokedAt) > now - REVOKED_TOKEN_RETENTION_MS);
+  const referencedClientIds = new Set<string>();
+  for (const request of store.authorizationRequests) if (request.expiresAt > now) referencedClientIds.add(request.clientId);
+  for (const code of store.authorizationCodes) if (code.expiresAt > now) referencedClientIds.add(code.clientId);
+  for (const token of store.accessTokens) {
+    if (token.revokedAt ? retainRevoked(token.revokedAt) : token.expiresAt > Math.floor(now / 1_000)) referencedClientIds.add(token.clientId);
+  }
+  for (const token of store.refreshTokens) {
+    if (token.revokedAt ? retainRevoked(token.revokedAt) : token.expiresAt > now) referencedClientIds.add(token.clientId);
+  }
+  store.clients = store.clients.filter((client) => !client.revokedAt
+    && (referencedClientIds.has(client.clientId) || Date.parse(client.createdAt) > now - UNUSED_CLIENT_TTL_MS));
+  const activeClientIds = new Set(store.clients.map((client) => client.clientId));
+  const recentRevoked = <T extends { revokedAt?: string | null }>(tokens: T[]): T[] => tokens
+    .filter((token) => retainRevoked(token.revokedAt))
+    .sort((left, right) => Date.parse(right.revokedAt ?? "") - Date.parse(left.revokedAt ?? ""))
+    .slice(0, MAX_REVOKED_TOKEN_HISTORY);
+  store.authorizationRequests = store.authorizationRequests.filter((request) => activeClientIds.has(request.clientId) && request.expiresAt > now);
+  store.authorizationCodes = store.authorizationCodes.filter((code) => activeClientIds.has(code.clientId) && code.expiresAt > now);
+  store.accessTokens = [
+    ...recentRevoked(store.accessTokens.filter((token) => activeClientIds.has(token.clientId))),
+    ...store.accessTokens.filter((token) => activeClientIds.has(token.clientId) && !token.revokedAt && token.expiresAt > Math.floor(now / 1_000)),
+  ];
+  store.refreshTokens = [
+    ...recentRevoked(store.refreshTokens.filter((token) => activeClientIds.has(token.clientId))),
+    ...store.refreshTokens.filter((token) => activeClientIds.has(token.clientId) && !token.revokedAt && token.expiresAt > now),
+  ];
+}
+
 export async function registerOAuthClient(input: OAuthClientRegistrationInput): Promise<OAuthRegistrationResult> {
   const redirectUris = validateRedirectUris(input.redirectUris);
   const authMethod = input.tokenEndpointAuthMethod ?? "none";
@@ -518,6 +567,9 @@ export async function registerOAuthClient(input: OAuthClientRegistrationInput): 
     ...(input.scopes ? { scopes: normalizeMcpScopes(input.scopes) } : {}),
   };
   await withMutation((store) => {
+    if (store.clients.filter((candidate) => !candidate.revokedAt).length >= MAX_REGISTERED_CLIENTS) {
+      throw new OAuthProtocolError("invalid_request", "This Notes deployment has reached its OAuth client registration limit. Revoke an unused connection in Settings and try again.");
+    }
     store.clients.push(client);
   });
   return { client: toPublicClient(client), ...(clientSecret ? { clientSecret } : {}) };
@@ -552,6 +604,9 @@ export async function beginAuthorizationRequest(input: OAuthAuthorizationRequest
   if (input.state && input.state.length > 2_048) throw new OAuthProtocolError("invalid_request", "state is too long.");
   const transactionId = randomValue("notes_tx_");
   await withMutation((nextStore) => {
+    if (nextStore.authorizationRequests.length >= MAX_PENDING_AUTHORIZATION_REQUESTS) {
+      throw new OAuthProtocolError("invalid_request", "This Notes deployment has reached its pending OAuth request limit. Try again later.");
+    }
     nextStore.authorizationRequests.push({
       transactionId,
       browserSecretHash: hashValue(browserSecret),
@@ -609,6 +664,9 @@ export async function approveAuthorizationRequest(
       const client = store.clients.find((candidate) => candidate.clientId === pending.clientId && !candidate.revokedAt);
       if (client) client.clientLabel = label;
     }
+    if (store.authorizationCodes.length >= MAX_AUTHORIZATION_CODES) {
+      throw new OAuthProtocolError("invalid_request", "This Notes deployment has reached its authorization code limit. Try again later.");
+    }
     const code = randomValue("notes_code_");
     store.authorizationCodes.push({
       codeHash: hashValue(code),
@@ -633,6 +691,11 @@ function issueTokenSet(
   resource: string,
   familyId = randomValue("notes_family_"),
 ): OAuthTokenSet {
+  const now = Date.now();
+  if (store.accessTokens.filter((token) => !token.revokedAt && token.expiresAt > Math.floor(now / 1_000)).length >= MAX_ACTIVE_ACCESS_TOKENS
+    || store.refreshTokens.filter((token) => !token.revokedAt && token.expiresAt > now).length >= MAX_ACTIVE_REFRESH_TOKENS) {
+    throw new OAuthProtocolError("invalid_request", "This Notes deployment has reached its active OAuth token limit.");
+  }
   const accessToken = randomValue("cnd_oauth_");
   const refreshToken = randomValue("cnd_oauth_refresh_");
   const createdAt = nowIso();
@@ -649,7 +712,7 @@ function issueTokenSet(
     scopes: [...scopes],
     resource,
     createdAt,
-    expiresAt: Math.floor(Date.now() / 1_000) + accessTtlSeconds,
+    expiresAt: Math.floor(now / 1_000) + accessTtlSeconds,
     revokedAt: null,
   });
   store.refreshTokens.push({
@@ -662,11 +725,11 @@ function issueTokenSet(
     resource,
     familyId,
     createdAt,
-    expiresAt: Date.now() + refreshTtl,
+    expiresAt: now + refreshTtl,
     revokedAt: null,
   });
   console.info(
-    `[mcp-oauth] issued tokens client=${clientId} scopes=${scopes.join(" ")} access_ttl_s=${accessTtlSeconds} refresh_expires_at=${new Date(Date.now() + refreshTtl).toISOString()}`,
+    `[mcp-oauth] issued tokens client=${clientId} scopes=${scopes.join(" ")} access_ttl_s=${accessTtlSeconds} refresh_expires_at=${new Date(now + refreshTtl).toISOString()}`,
   );
   return { accessToken, refreshToken, tokenType: "Bearer", expiresIn: accessTtlSeconds, scope: [...scopes] };
 }

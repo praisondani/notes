@@ -39,6 +39,12 @@ function authFilePath(): string {
   return path.join(dataDirectory(), AUTH_FILE_NAME);
 }
 
+async function secureDataDirectory(): Promise<void> {
+  const directory = dataDirectory();
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  if (directory !== path.parse(directory).root) await chmod(directory, 0o700);
+}
+
 export function normalizeUsername(value: string): string {
   return value.trim().toLocaleLowerCase();
 }
@@ -107,9 +113,8 @@ function validAuthState(value: unknown): value is AuthState {
 }
 
 export async function saveAuthState(state: AuthState): Promise<void> {
-  const directory = dataDirectory();
   const filename = authFilePath();
-  await mkdir(directory, { recursive: true, mode: 0o700 });
+  await secureDataDirectory();
   const temporary = `${filename}.${process.pid}.${randomUUID()}.tmp`;
   await writeFile(temporary, `${JSON.stringify(state, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
   await chmod(temporary, 0o600);
@@ -131,7 +136,11 @@ export async function createAuthState(input: CredentialInput, now = new Date()):
 
 export async function loadAuthState(): Promise<AuthState | null> {
   try {
-    const parsed = JSON.parse(await readFile(authFilePath(), "utf8")) as unknown;
+    const filename = authFilePath();
+    const raw = await readFile(filename, "utf8");
+    await secureDataDirectory();
+    await chmod(filename, 0o600);
+    const parsed = JSON.parse(raw) as unknown;
     if (!validAuthState(parsed)) throw new Error("Invalid Notes auth store");
     return parsed;
   } catch (error) {

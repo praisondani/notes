@@ -8,14 +8,15 @@ import {
   getNoteRecord,
   updateNoteRecord,
 } from "@/lib/mcp-service";
-import { saveWorkspace } from "@/lib/workspace-store";
+import { loadWorkspaceSnapshot, saveWorkspace } from "@/lib/workspace-store";
 
 let dataDirectory = "";
 
 beforeEach(async () => {
   dataDirectory = await mkdtemp(path.join(os.tmpdir(), "notes-concurrent-"));
   process.env.DATA_DIR = dataDirectory;
-  await saveWorkspace({ version: 1, notes: [], folders: [], groups: [] });
+  const initial = await loadWorkspaceSnapshot();
+  await saveWorkspace({ version: 1, notes: [], folders: [], groups: [] }, initial.revision);
 });
 
 afterEach(async () => {

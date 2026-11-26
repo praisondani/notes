@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { saveWorkspace } from "@/lib/workspace-store";
+import { loadWorkspaceSnapshot, saveWorkspace } from "@/lib/workspace-store";
 import { createMcpServer } from "@/mcp/server";
 
 let dataDirectory = "";
@@ -13,7 +13,8 @@ let dataDirectory = "";
 beforeEach(async () => {
   dataDirectory = await mkdtemp(path.join(os.tmpdir(), "notes-mcp-server-"));
   process.env.DATA_DIR = dataDirectory;
-  await saveWorkspace({ version: 1, notes: [], folders: [], groups: [] });
+  const initial = await loadWorkspaceSnapshot();
+  await saveWorkspace({ version: 1, notes: [], folders: [], groups: [] }, initial.revision);
 });
 
 afterEach(async () => {
